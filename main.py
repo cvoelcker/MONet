@@ -107,7 +107,29 @@ def clevr_experiment():
         monet = nn.DataParallel(monet)
     run_training(monet, conf, trainloader)
 
+def atari_experiment():
+    conf = config.atari_config
+    crop_tf = transforms.Lambda(lambda x: transforms.functional.crop(x, 29, 64, 192, 192))
+    drop_alpha_tf = transforms.Lambda(lambda x: x[:3])
+    transform = transforms.Compose([crop_tf,
+                                    transforms.Resize((128, 128)),
+                                    transforms.ToTensor(),
+                                    drop_alpha_tf,
+                                    transforms.Lambda(lambda x: x.float()),
+                                   ])
+    trainset = datasets.Atari(conf.data_dir,
+                              transform=transform)
+
+    trainloader = torch.utils.data.DataLoader(trainset,
+                                              batch_size=conf.batch_size,
+                                              shuffle=True, num_workers=8)
+    monet = model.Monet(conf, 128, 128).cuda()
+    if conf.parallel:
+        monet = nn.DataParallel(monet)
+    run_training(monet, conf, trainloader)
+
 if __name__ == '__main__':
-    clevr_experiment()
+    # clevr_experiment()
     # sprite_experiment()
+    atari_experiment()
 

@@ -48,5 +48,16 @@ clevr_config = MonetConfig(vis_every=50,
                            fg_sigma=0.11,
                           )
 
-
-
+atari_config = MonetConfig(vis_every=50,
+                           batch_size=64,
+                           num_epochs=200,
+                           load_parameters=True,
+                           checkpoint_file='../monet_checkpoints/atari.ckpt',
+                           data_dir='../master_thesis_code/src/data/static_gym/',
+                           parallel=True,
+                           num_slots=20,
+                           num_blocks=6,
+                           channel_base=64,
+                           bg_sigma=0.09,
+                           fg_sigma=0.11,
+                          )

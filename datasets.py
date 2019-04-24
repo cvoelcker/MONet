@@ -1,5 +1,7 @@
 import os
 import sys
+import gzip
+import dill
 
 import torch
 from torch.utils.data import Dataset
@@ -109,17 +111,27 @@ class Atari(Dataset):
     def __init__(self, directory, transform=None):
         self.directory = directory
         self.filenames = os.listdir(directory)
-        self.n = len(self.filenames) * 1024
         self.transform = transform
+
+        self.dataset = self.load_dataset()
+        
+        self.n = len(self.dataset)
 
     def __len__(self):
         return self.n
 
-    def __iter__(self):
+    def load_dataset(self):
+        dataset = np.array([[[[]]]])
+
         for imgfile in self.filenames:
             imgpath = os.path.join(self.directory, imgfile)
             with gzip.open(imgpath, 'rb') as f:
                 img = dill.load(f)
-                for i in range(img.shape[0]):
-                    transformed_img = img[i] if not self.transform else self.transform(img[i])
-                    yield transformed_img, 1
+                dataset = np.append(dataset, img, axis=0)
+        return dataset
+
+    def __getitem__(self, idx):
+        img = self.dataset[idx]
+        if self.transform is not None:
+            img = self.transform(img)
+        return img, 1

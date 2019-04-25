@@ -144,7 +144,7 @@ class Monet(nn.Module):
         self.beta = 0.5
         self.gamma = 0.25
 
-    def forward(self, x):
+    def forward(self, x, pass_latent=False):
         scope = torch.ones_like(x[:, 0:1])
         masks = []
         for i in range(self.conf.num_slots-1):
@@ -156,8 +156,11 @@ class Monet(nn.Module):
         full_reconstruction = torch.zeros_like(x)
         p_xs = torch.zeros_like(loss)
         kl_zs = torch.zeros_like(loss)
+        zs = []
         for i, mask in enumerate(masks):
             z, kl_z = self.__encoder_step(x, mask)
+            if pass_latent:
+                zs.append(z)
             sigma = self.conf.bg_sigma if i == 0 else self.conf.fg_sigma
             p_x, x_recon, mask_pred = self.__decoder_step(x, z, mask, sigma)
             mask_preds.append(mask_pred)
@@ -176,6 +179,10 @@ class Monet(nn.Module):
               'kl_z', kl_zs.mean().item(),
               'kl masks', kl_masks.mean().item())
         loss += self.gamma * kl_masks
+        if pass_latent:
+            return {'loss': loss,
+                    'masks': masks,
+                    'latent': zs}
         return {'loss': loss,
                 'masks': masks,
                 'reconstructions': full_reconstruction}

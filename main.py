@@ -3,10 +3,12 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 import torch.optim as optim
+from torchsummary import summary
 import numpy as np
 import visdom
 
 import os
+import tqdm
 
 import model
 import datasets
@@ -46,9 +48,9 @@ def run_training(monet, conf, trainloader):
 
     optimizer = optim.RMSprop(monet.parameters(), lr=1e-4)
 
-    for epoch in range(conf.num_epochs):
+    for epoch in tqdm.tqdm(range(conf.num_epochs)):
         running_loss = 0.0
-        for i, data in enumerate(trainloader, 0):
+        for i, data in tqdm.tqdm(enumerate(trainloader, 0)):
             images, counts = data
             images = images.cuda()
             optimizer.zero_grad()
@@ -109,23 +111,24 @@ def clevr_experiment():
 
 def atari_experiment():
     conf = config.atari_config
-    crop_tf = transforms.Lambda(lambda x: transforms.functional.crop(x, 29, 64, 192, 192))
-    drop_alpha_tf = transforms.Lambda(lambda x: x[:3])
-    transform = transforms.Compose([crop_tf,
-                                    transforms.Resize((128, 128)),
+    # drop_alpha_tf = transforms.Lambda(lambda x: x[:3])
+    transform = transforms.Compose([transforms.Grayscale(num_output_channels=1),
+                                    transforms.Resize((32, 32)),
                                     transforms.ToTensor(),
-                                    drop_alpha_tf,
+                                    # drop_alpha_tf,
                                     transforms.Lambda(lambda x: x.float()),
                                    ])
     trainset = datasets.Atari(conf.data_dir,
                               transform=transform)
-
     trainloader = torch.utils.data.DataLoader(trainset,
                                               batch_size=conf.batch_size,
                                               shuffle=True, num_workers=8)
-    monet = model.Monet(conf, 128, 128).cuda()
+    monet = model.Monet(conf, 32, 32).cuda()
+    summary(monet, trainset[0][0].shape)
+    #monet = monet.cuda()
+    #exit(0)
     if conf.parallel:
-        monet = nn.DataParallel(monet)
+        monet = nn.DataParallel(monet, device_ids=[0])
     run_training(monet, conf, trainloader)
 
 if __name__ == '__main__':

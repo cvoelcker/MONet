@@ -2,6 +2,7 @@ import os
 import sys
 import gzip
 import dill
+import tqdm
 
 import torch
 from torch.utils.data import Dataset
@@ -115,23 +116,26 @@ class Atari(Dataset):
 
         self.dataset = self.load_dataset()
         
-        self.n = len(self.dataset)
+        self.n = self.dataset.shape[0]
 
     def __len__(self):
         return self.n
 
     def load_dataset(self):
-        dataset = np.array([[[[]]]])
+        dataset = []
 
-        for imgfile in self.filenames:
+        for imgfile in tqdm.tqdm(self.filenames):
             imgpath = os.path.join(self.directory, imgfile)
             with gzip.open(imgpath, 'rb') as f:
                 img = dill.load(f)
-                dataset = np.append(dataset, img, axis=0)
-        return dataset
+                dataset.append(img)
+        return np.concatenate(dataset, axis=0)
 
     def __getitem__(self, idx):
-        img = self.dataset[idx]
+        img = Image.fromarray(self.dataset[idx])
         if self.transform is not None:
             img = self.transform(img)
         return img, 1
+
+    def get_shape(self):
+        return self.dataset[0].shape

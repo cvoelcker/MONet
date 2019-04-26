@@ -8,20 +8,21 @@ import numpy as np
 import visdom
 
 import os
+from datetime import datetime
 import tqdm
 
 import model
 import datasets
 import config
 
-vis = visdom.Visdom()
+vis = visdom.Visdom(env = 'rl_pictures_{}'.format(datetime.now().strftime('%Y-%m-%d')))
 
 
 def numpify(tensor):
     return tensor.cpu().detach().numpy()
 
 def visualize_masks(imgs, masks, recons):
-    print('recons min/max', recons.min().item(), recons.max().item())
+    # print('recons min/max', recons.min().item(), recons.max().item())
     recons = np.clip(recons, 0., 1.)
     colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255), (255, 0, 255), (255, 255, 0)]
     colors.extend([(c[0]//2, c[1]//2, c[2]//2) for c in colors])
@@ -50,7 +51,8 @@ def run_training(monet, conf, trainloader):
 
     for epoch in tqdm.tqdm(range(conf.num_epochs)):
         running_loss = 0.0
-        for i, data in tqdm.tqdm(enumerate(trainloader, 0)):
+        epoch_loss = []
+        for i, data in enumerate(tqdm.tqdm(trainloader), 0):
             images, counts = data
             images = images.cuda()
             optimizer.zero_grad()
@@ -60,16 +62,19 @@ def run_training(monet, conf, trainloader):
             optimizer.step()
 
             running_loss += loss.item()
+            epoch_loss.append(loss.item())
 
             if i % conf.vis_every == conf.vis_every-1:
-                print('[%d, %5d] loss: %.3f' %
-                      (epoch + 1, i + 1, running_loss / conf.vis_every))
+                # print('[%d, %5d] loss: %.3f' %
+                #       (epoch + 1, i + 1, running_loss / conf.vis_every))
                 running_loss = 0.0
                 visualize_masks(numpify(images[:8]),
                                 numpify(output['masks'][:8]),
                                 numpify(output['reconstructions'][:8]))
 
         torch.save(monet.state_dict(), conf.checkpoint_file)
+        print(np.mean(epoch_loss))
+
 
     print('training done')
 
@@ -111,11 +116,9 @@ def clevr_experiment():
 
 def atari_experiment():
     conf = config.atari_config
-    # drop_alpha_tf = transforms.Lambda(lambda x: x[:3])
-    transform = transforms.Compose([transforms.Grayscale(num_output_channels=1),
-                                    transforms.Resize((32, 32)),
+    shape = (256,128)
+    transform = transforms.Compose([transforms.Resize(shape),
                                     transforms.ToTensor(),
-                                    # drop_alpha_tf,
                                     transforms.Lambda(lambda x: x.float()),
                                    ])
     trainset = datasets.Atari(conf.data_dir,
@@ -123,12 +126,10 @@ def atari_experiment():
     trainloader = torch.utils.data.DataLoader(trainset,
                                               batch_size=conf.batch_size,
                                               shuffle=True, num_workers=8)
-    monet = model.Monet(conf, 32, 32).cuda()
+    monet = model.Monet(conf, *shape).cuda()
     summary(monet, trainset[0][0].shape)
-    #monet = monet.cuda()
-    #exit(0)
     if conf.parallel:
-        monet = nn.DataParallel(monet, device_ids=[0])
+        monet = nn.DataParallel(monet, device_ids=[0,1])
     run_training(monet, conf, trainloader)
 
 if __name__ == '__main__':

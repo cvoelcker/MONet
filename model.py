@@ -171,6 +171,8 @@ class Monet(nn.Module):
 
         masks = torch.cat(masks, 1)
         tr_masks = torch.transpose(masks, 1, 3)
+        # hotfix for wrong transpose
+        tr_masks = torch.transpose(tr_masks, 1, 2)
         q_masks = dists.Categorical(probs=tr_masks)
         q_masks_recon = dists.Categorical(logits=torch.stack(mask_preds, 3))
         kl_masks = dists.kl_divergence(q_masks, q_masks_recon)

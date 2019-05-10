@@ -141,7 +141,7 @@ class Monet(nn.Module):
         self.attention = AttentionNet(conf)
         self.encoder = EncoderNet(height, width)
         self.decoder = DecoderNet(height, width)
-        self.beta = 0.5
+        self.beta = 0.25
         self.gamma = 0.25
 
     def forward(self, x, pass_latent=False):
@@ -177,9 +177,9 @@ class Monet(nn.Module):
         q_masks_recon = dists.Categorical(logits=torch.stack(mask_preds, 3))
         kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
         kl_masks = torch.sum(kl_masks, [1, 2])
-        print('px', p_xs.mean().item(),
-              'kl_z', kl_zs.mean().item(),
-              'kl masks', kl_masks.mean().item())
+        # print('px', p_xs.mean().item(),
+        #       'kl_z', kl_zs.mean().item(),
+        #       'kl masks', kl_masks.mean().item())
         loss += self.gamma * kl_masks
         if pass_latent:
             return {'loss': loss,

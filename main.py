@@ -73,7 +73,7 @@ def run_training(monet, conf, trainloader):
                                 numpify(output['reconstructions'][:8]))
 
         torch.save(monet.state_dict(), conf.checkpoint_file)
-        print(np.mean(epoch_loss))
+        # print(np.mean(epoch_loss))
 
 
     print('training done')
@@ -121,6 +121,13 @@ def atari_experiment():
                                     transforms.ToTensor(),
                                     transforms.Lambda(lambda x: x.float()),
                                    ])
+    if conf.reshape:
+        shape = (128,128)
+        transform = transforms.Compose([transforms.Lambda(lambda x: transforms.functional.crop(x, 16, 0, 170, 160)),
+                                        transforms.Resize(shape),
+                                        transforms.ToTensor(),
+                                        transforms.Lambda(lambda x: x.float()),
+                                       ])
     trainset = datasets.Atari(conf.data_dir,
                               transform=transform)
     trainloader = torch.utils.data.DataLoader(trainset,
@@ -129,7 +136,7 @@ def atari_experiment():
     monet = model.Monet(conf, *shape).cuda()
     summary(monet, trainset[0][0].shape)
     if conf.parallel:
-        monet = nn.DataParallel(monet, device_ids=[0,1])
+        monet = nn.DataParallel(monet, device_ids=[0])
     run_training(monet, conf, trainloader)
 
 if __name__ == '__main__':

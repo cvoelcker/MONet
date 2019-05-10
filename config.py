@@ -16,7 +16,9 @@ config_options = [
     'channel_base',  # Number of channels used for the first U-Net conv layer
     'bg_sigma',  # Sigma of the decoder distributions for the first slot
     'fg_sigma',  # Sigma of the decoder distributions for all other slots
-    'reshape',
+    'reshape', # flag to reshape the input picture to a specific size
+    'latent_dim', # enables setting the size of the spatial transform glimpse
+    'z_dim', # the size of the latent embedding in the VAE component
 ]
 
 MonetConfig = namedtuple('MonetConfig', config_options)
@@ -51,16 +53,33 @@ clevr_config = MonetConfig(vis_every=50,
                           )
 
 atari_config = MonetConfig(vis_every=50,
-                           batch_size=8,
+                           batch_size=2,
                            num_epochs=20,
                            load_parameters=False,
                            checkpoint_file='../monet_checkpoints/atari_tiny_net.ckpt',
                            data_dir='../master_thesis_code/src/data/static_gym/',
                            parallel=True,
-                           num_slots=14,
-                           num_blocks=3,
+                           num_slots=3,
+                           num_blocks=1,
                            channel_base=32,
                            bg_sigma=0.09,
                            fg_sigma=0.11,
                            reshape=True,
+                          )
+
+atari_config = MonetConfig(vis_every=50,
+                           batch_size=2,
+                           num_epochs=20,
+                           load_parameters=False,
+                           checkpoint_file='../monet_checkpoints/atari_tiny_net.ckpt',
+                           data_dir='../master_thesis_code/src/data/static_gym/',
+                           parallel=True,
+                           num_slots=3,
+                           num_blocks=1,
+                           channel_base=32,
+                           bg_sigma=0.09,
+                           fg_sigma=0.11,
+                           reshape=True,
+                           latent_dim=(32,32),
+                           z_dim=32,
                           )

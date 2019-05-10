@@ -64,22 +64,21 @@ class DecoderNet(nn.Module):
 
 
 class TransformerNet(nn.Module):
-    def __init(self, height, width, latent_dim, z_dim):
+    def __init__(self, conf, height, width):
         super().__init__()
         self.height = height
         self.width = width
 
         # little bit of a bad name, this is actually the spatial network "viewsize"
-        self.latent_dim_x = latent_dim[0]
-        self.latent_dim_y = latent_dim[1]
+        self.latent_dim_x, self.latent_dim_y = conf.latent_dim
+        self.z_dim = conf.z_dim
+        self.batch_size = conf.batch_size
 
-        self.z_dim = 
-
-        self.latent_size = torch.Size((batch_size, 4, self.latent_dim_x, self.latent_dim_y))
+        self.latent_size = torch.Size((self.batch_size, 4, self.latent_dim_x, self.latent_dim_y))
         
         # inverts both 2d picture and 1d masks
-        self.original_size_3 = torch.Size((batch_size, 3, height, width))
-        self.original_size_1 = torch.Size((batch_size, 1, height, width))
+        self.original_size_3 = torch.Size((self.batch_size, 3, height, width))
+        self.original_size_1 = torch.Size((self.batch_size, 1, height, width))
 
         # taken from the demo
         # TODO: adapt network architecture to problem specific implementation
@@ -107,8 +106,8 @@ class TransformerNet(nn.Module):
         # z_dim is the number of Gaussian, so
         # it is replicated, ones for mean and ones
         # for sigma
-        self.encoder_network = EncoderNet(*latent_dim, 2 * z_dim)
-        self.decoder_network = DecoderNet(*latent_dim)
+        self.encoder_network = EncoderNet(*conf.latent_dim, 2 * conf.z_dim)
+        self.decoder_network = DecoderNet(*conf.latent_dim)
 
     # Spatial transformer network forward function
     def stn(self, x):
@@ -207,10 +206,7 @@ class Monet(nn.Module):
     def __init__(self, conf, height, width):
         super().__init__()
         self.conf = conf
-        self.attention = AttentionNet(conf)
-        self.encoder = EncoderNet(height, width)
-        self.decoder = DecoderNet(height, width)
-        self.transformer_network = TransformerNet(height, width, self.conf.latent_dim)
+        self.transformer_network = TransformerNet(conf, height, width)
         self.beta = 0.5
         self.gamma = 0.25
 
@@ -225,7 +221,7 @@ class Monet(nn.Module):
         p_xs = torch.zeros_like(loss)
         kl_zs = torch.zeros_like(loss)
         for i in range(self.conf.num_slots-1):
-            transformer_input = torch.stack([total_mask, x], dim=-1)
+            transformer_input = torch.stack([scope, x], dim=-1)
             res = self.transformer_network(transformer_input, scope)
             total_reconstruction += res['reconstruction']
             masks.append(res['mask'])

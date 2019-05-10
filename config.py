@@ -16,9 +16,11 @@ config_options = [
     'channel_base',  # Number of channels used for the first U-Net conv layer
     'bg_sigma',  # Sigma of the decoder distributions for the first slot
     'fg_sigma',  # Sigma of the decoder distributions for all other slots
+    'reshape',
 ]
 
 MonetConfig = namedtuple('MonetConfig', config_options)
+MonetConfig.__new__.__defaults__ = (None,) * len(MonetConfig._fields)
 
 sprite_config = MonetConfig(vis_every=50,
                             batch_size=64,
@@ -60,4 +62,5 @@ atari_config = MonetConfig(vis_every=50,
                            channel_base=32,
                            bg_sigma=0.09,
                            fg_sigma=0.11,
+                           reshape=True,
                           )

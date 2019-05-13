@@ -164,17 +164,25 @@ class Monet(nn.Module):
             sigma = self.conf.bg_sigma if i == 0 else self.conf.fg_sigma
             p_x, x_recon, mask_pred = self.__decoder_step(x, z, mask, sigma)
             mask_preds.append(mask_pred)
+            print(mask.size())
+            print(mask_pred.size())
             loss += -p_x + self.beta * kl_z
             p_xs += -p_x
             kl_zs += kl_z
             full_reconstruction += mask * x_recon
 
         masks = torch.cat(masks, 1)
+        mask_preds = torch.stack(mask_preds, 3)
         tr_masks = torch.transpose(masks, 1, 3)
         # hotfix for wrong transpose
         tr_masks = torch.transpose(tr_masks, 1, 2)
+
+        print(masks.size())
+        print(mask_preds.size())
+        print(tr_masks.size())
+
         q_masks = dists.Categorical(probs=tr_masks)
-        q_masks_recon = dists.Categorical(logits=torch.stack(mask_preds, 3))
+        q_masks_recon = dists.Categorical(logits=mask_preds)
         kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
         kl_masks = torch.sum(kl_masks, [1, 2])
         # print('px', p_xs.mean().item(),

@@ -16,7 +16,7 @@ import spatial_monet
 import datasets
 import config
 
-vis = visdom.Visdom(env = 'rl_pictures_{}'.format(datetime.now().strftime('%Y-%m-%d')))
+# vis = visdom.Visdom(env = 'rl_pictures_{}'.format(datetime.now().strftime('%Y-%m-%d')))
 
 
 def numpify(tensor):
@@ -116,7 +116,7 @@ def clevr_experiment():
     run_training(monet, conf, trainloader)
 
 def spatial_transform_experiment():
-    conf = config.atari_config
+    conf = config.spatial_transform_config
     shape = (256,128)
     transform = transforms.Compose([transforms.Resize(shape),
                                     transforms.ToTensor(),
@@ -134,15 +134,21 @@ def spatial_transform_experiment():
     trainloader = torch.utils.data.DataLoader(trainset,
                                               batch_size=conf.batch_size,
                                               shuffle=True, num_workers=8)
-    torch.cuda.set_device(3)
-    monet = spatial_monet.Monet(conf, *shape).cuda()
-    summary(monet, trainset[0][0].shape)
     if conf.parallel:
+        torch.cuda.set_device(3)
+        monet = spatial_monet.Monet(conf, 
+                                    *shape).cuda()
+        summary(monet, trainset[0][0].shape)
         monet = nn.DataParallel(monet, device_ids=[0])
+    else:
+        monet = spatial_monet.Monet(conf, 
+                                    *shape)
+        # print(conf.batch_size)
+        # print(trainset[0][0].shape)
+        summary(monet, trainset[0][0].shape, device="cpu")
+        #monet = nn.DataParallel(monet, device_ids=[0])
     run_training(monet, conf, trainloader)
 
-    monet = spatial_monet.Monet(conf, *shape).cuda()
-    summary(monet, trainset[0][0].shape)
 
 def atari_experiment():
     conf = config.atari_config
@@ -163,12 +169,18 @@ def atari_experiment():
     trainloader = torch.utils.data.DataLoader(trainset,
                                               batch_size=conf.batch_size,
                                               shuffle=True, num_workers=8)
-    torch.cuda.set_device(3)
-    monet = spatial_monet.Monet(conf, 
-                                *shape).cuda()
-    summary(monet, trainset[0][0].shape)
     if conf.parallel:
+        torch.cuda.set_device(3)
+        monet = model.Monet(conf, 
+                                    *shape).cuda()
+        summary(monet, trainset[0][0].shape)
         monet = nn.DataParallel(monet, device_ids=[0])
+    else:
+        monet = model.Monet(conf, 
+                                    *shape)
+        summary(monet, trainset[0][0].shape)
+        #monet = nn.DataParallel(monet, device_ids=[0])
+
     run_training(monet, conf, trainloader)
 
     monet = model.Monet(conf, *shape).cuda()
@@ -177,6 +189,6 @@ def atari_experiment():
 if __name__ == '__main__':
     # clevr_experiment()
     # sprite_experiment()
-    # atari_experiment()
-    spatial_transform_experiment()
+    atari_experiment()
+    # spatial_transform_experiment()
 

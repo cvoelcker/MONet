@@ -189,6 +189,6 @@ def atari_experiment():
 if __name__ == '__main__':
     # clevr_experiment()
     # sprite_experiment()
-    atari_experiment()
-    # spatial_transform_experiment()
+    # atari_experiment()
+    spatial_transform_experiment()
 

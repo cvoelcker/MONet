@@ -6,6 +6,74 @@ import torch.distributions as dists
 import torchvision
 
 
+def double_conv(in_channels, out_channels):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, 3, padding=1),
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(out_channels, out_channels, 3, padding=1),
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True)
+    )
+
+
+class UNet(nn.Module):
+    def __init__(self, num_blocks, in_channels, out_channels, channel_base=64):
+        super().__init__()
+        self.num_blocks = num_blocks
+        self.down_convs = nn.ModuleList()
+        cur_in_channels = in_channels
+        for i in range(num_blocks):
+            self.down_convs.append(double_conv(cur_in_channels,
+                                               channel_base * 2**i))
+            cur_in_channels = channel_base * 2**i
+
+        self.tconvs = nn.ModuleList()
+        for i in range(num_blocks-1, 0, -1):
+            self.tconvs.append(nn.ConvTranspose2d(channel_base * 2**i,
+                                                  channel_base * 2**(i-1),
+                                                  2, stride=2))
+
+        self.up_convs = nn.ModuleList()
+        for i in range(num_blocks-2, -1, -1):
+            self.up_convs.append(double_conv(channel_base * 2**(i+1), channel_base * 2**i))
+
+        self.final_conv = nn.Conv2d(channel_base, out_channels, 1)
+
+    def forward(self, x):
+        intermediates = []
+        cur = x
+        for down_conv in self.down_convs[:-1]:
+            cur = down_conv(cur)
+            intermediates.append(cur)
+            cur = nn.MaxPool2d(2)(cur)
+
+        cur = self.down_convs[-1](cur)
+
+        for i in range(self.num_blocks-1):
+            cur = self.tconvs[i](cur)
+            cur = torch.cat((cur, intermediates[-i -1]), 1)
+            cur = self.up_convs[i](cur)
+
+        return self.final_conv(cur)
+
+
+class AttentionNet(nn.Module):
+    def __init__(self, conf):
+        super().__init__()
+        self.conf = conf
+        self.unet = UNet(num_blocks=conf.num_blocks,
+                         in_channels=4,
+                         out_channels=2,
+                         channel_base=conf.channel_base)
+
+    def forward(self, x, scope):
+        inp = torch.cat((x, scope), 1)
+        logits = self.unet(inp)
+        alpha = torch.softmax(logits, 1)
+        return alpha
+
+
 class EncoderNet(nn.Module):
     def __init__(self, width, height, z_dim):
         super().__init__()
@@ -34,19 +102,22 @@ class EncoderNet(nn.Module):
         x = self.mlp(x)
         return x
 
+
 class DecoderNet(nn.Module):
     def __init__(self, height, width, z_dim):
         super().__init__()
         self.height = height
         self.width = width
         self.convs = nn.Sequential(
-            nn.Conv2d(z_dim + 2, 32, 3),
+            nn.Conv2d(z_dim + 2, 32, 3, padding=(1,1)),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, 3),
+            nn.Conv2d(32, 32, 3, padding=(1,1)),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, 3),
+            nn.Conv2d(32, 32, 3, padding=(1,1)),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, 3),
+            nn.Conv2d(32, 32, 3, padding=(1,1)),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, padding=(1,1)),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 4, 1),
         )
@@ -120,16 +191,17 @@ class TransformerNet(nn.Module):
         # for sigma
         self.encoder_net = EncoderNet(*conf.latent_dim, 2 * conf.z_dim)
         self.decoder_net = DecoderNet(*conf.latent_dim, conf.z_dim)
-        self.mask_net = nn.Sequential(
-                nn.Conv2d(4,32,kernel_size=3,padding=1),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(32,32,kernel_size=3,padding=1),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(32,32,kernel_size=3,padding=1),
-                nn.ReLU(inplace=True),
-                )
-        self.mlp = nn.Sequential(
-                nn.Linear(32 * self.latent_dim_x * self.latent_dim_y, self.latent_dim_x * self.latent_dim_y))
+        # self.mask_net = nn.Sequential(
+        #         nn.Conv2d(4,32,kernel_size=3,padding=1),
+        #         nn.ReLU(inplace=True),
+        #         nn.Conv2d(32,32,kernel_size=3,padding=1),
+        #         nn.ReLU(inplace=True),
+        #         nn.Conv2d(32,32,kernel_size=3,padding=1),
+        #         nn.ReLU(inplace=True),
+        #         )
+        # self.mlp = nn.Sequential(
+        #         nn.Linear(32 * self.latent_dim_x * self.latent_dim_y, self.latent_dim_x * self.latent_dim_y))
+        self.mask_net = AttentionNet(self.conf)
 
         self.theta_append = torch.Tensor([0., 0., 1.]).view(1,1,-1).repeat(self.batch_size,1,1)
         print(self.theta_append)
@@ -175,11 +247,12 @@ class TransformerNet(nn.Module):
     def mask_network(self, x, scope):
         # print(x.size())
         # print(scope.size())
-        complete = torch.cat([x, scope], dim=1)
-        mask = self.mask_net(complete)
-        mask_dense = mask.view(-1,32 * self.latent_dim_x * self.latent_dim_y)
-        mask_dense = self.mlp(mask_dense)
-        return mask_dense.view(-1,1,self.latent_dim_x, self.latent_dim_y)
+        # complete = torch.cat([x, scope], dim=1)
+        # mask = self.mask_net(complete)
+        # mask_dense = mask.view(-1,32 * self.latent_dim_x * self.latent_dim_y)
+        # mask_dense = self.mlp(mask_dense)
+        # return mask_dense.view(-1,1,self.latent_dim_x, self.latent_dim_y)
+        return self.mask_net(x, scope)
 
     def forward(self, x, scope, i):
         complete = torch.cat([x, scope], 1)
@@ -205,7 +278,7 @@ class TransformerNet(nn.Module):
         # vae prior loss
         # TODO: there is a mistake here, since the mask does not
         # interact with the VAE, but it should given the code
-        # in the paper. I bleieve it's not that bad, since
+        # in the paper. I believe it's not that bad, since
         # we have the spatial attention network, which already 
         # represents a mask, but we should check that
         # TODO: probably fixed by above
@@ -220,6 +293,9 @@ class TransformerNet(nn.Module):
         x_recon = self.decoder_network(latent_vae)
         mask_pred = x_recon[:, 3:]
         x_recon = x_recon[:, :3]
+        
+        print(x_zoom.size())
+        print(x_recon.size())
 
         # project reconstruction and mask back into original space
         mask = scope * self.invert_stn(mask, theta, 1)
@@ -248,6 +324,23 @@ class Monet(nn.Module):
         self.width = width
         self.height = height
 
+        self.z_dim = 8
+
+        self.bg_encoder = EncoderNet(width, height, 2 * self.z_dim)
+        self.bg_decoder = DecoderNet(width, height, self.z_dim)
+    
+    def encoder_network(self, x, mask):
+        complete = torch.cat([x, mask], dim=1)
+        x_embedded = self.bg_encoder(complete)
+        # seperates the x vector into mu and sigma
+        latent_mean = x_embedded[:, :self.z_dim]
+        latent_sigma = x_embedded[:, self.z_dim:]
+        return latent_mean, latent_sigma
+
+    def decoder_network(self, z):
+        # print(z.size())
+        return self.bg_decoder(z)
+
     def forward(self, x):
         # print(x.size())
         scope = torch.ones_like(x[:, 0:1])
@@ -269,15 +362,41 @@ class Monet(nn.Module):
             latents.append(res['latent'])
             mask_preds.append(res['mask_pred'].view(-1, self.width, self.height))
             print(res['mask'].size())
-            
-        # TODO: missing implementation for the final stage
-        #       where the rest of the scope is simply used
+            kl_zs += res['kl_latent']
+
+        ## now we might have some parts of the picture still unexplained
+        ## these are predicted by a whole picture VAE, the background model
+        final_mask = sum(masks)
+        
+        latent_mean, latent_sigma = self.encoder_network(x, final_mask)
+        dist = dists.Normal(latent_mean, latent_sigma)
+        dist_0 = dists.Normal(0., latent_sigma)
+        latent_vae = latent_mean + dist_0.sample()
+        q_z = dist.log_prob(latent_vae)
+        bg_kl_z = dists.kl_divergence(dist, dists.Normal(0., 1.))
+        bg_kl_z = torch.sum(bg_kl_z, 1)
+
+        kl_zs += bg_kl_z
+
+        # decode and multiply by mask
+        final_recon = self.decoder_network(latent_vae)
+        final_x = final_recon[:, :3]
+        final_mask_pred = final_recon[:, 3]
+
+        masks.append(final_mask)
+        mask_preds.append(final_mask_pred)
+        
+        print(final_mask.size())
+        print(final_x.size())
+        print(total_reconstruction.size())
+        full_reconstruction = final_mask * final_x + total_reconstruction
+        
         sigma = self.conf.bg_sigma if i == 0 else self.conf.fg_sigma
-        dist = dists.Normal(total_reconstruction, sigma)
+        dist = dists.Normal(full_reconstruction, sigma)
         p_x = dist.log_prob(x)
         p_x = torch.sum(p_x, [1, 2, 3])
         
-        loss += -p_x + self.beta * torch.sum(kl_zs)
+        loss += -p_x + self.beta * kl_zs
 
         # mask loss
         masks = torch.cat(masks, 1)

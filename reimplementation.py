@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from model import import UNet
+from model import UNet
 
 
 ModelConfiguration = collections.namedtuple(
@@ -62,7 +62,7 @@ class EncoderNet(nn.Module):
             nn.MaxPool2d(2, stride=2),
             
             nn.Conv2d(64, 64, 3, padding=(1,1)),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
             nn.MaxPool2d(2, stride=2),
             )
         conv_size = 64 * self.patch_shape[0]/(2**4) * self.patch_shape[1]/(2**4)
@@ -124,7 +124,7 @@ class DecoderNet(nn.Module):
         return result
 
 
-class SpatialLocalizationNet(nn.model):
+class SpatialLocalizationNet(nn.Module):
     """
     Attention network for object localization
     """
@@ -164,7 +164,7 @@ class SpatialLocalizationNet(nn.model):
         self.theta_regression = nn.Sequential(
                 nn.Linear(conv_size, 128),
                 nn.ReLU(inplace=True),
-                nn.Linear(128, 6)
+                nn.Linear(128, 6),
                 nn.Tanh(inplace=True)
                 )
         

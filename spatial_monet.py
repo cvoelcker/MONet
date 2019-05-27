@@ -78,20 +78,20 @@ class EncoderNet(nn.Module):
     def __init__(self, width, height, z_dim):
         super().__init__()
         self.convs = nn.Sequential(
-            nn.Conv2d(4, 32, 3, stride=2),
+            nn.Conv2d(4, 64, 3, stride=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, 3, stride=2),
+            nn.Conv2d(64, 128, 3, stride=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 64, 3, stride=2),
+            nn.Conv2d(128, 256, 3, stride=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, 3, stride=2),
+            nn.Conv2d(256, 256, 3, stride=2),
             nn.ReLU(inplace=True)
         )
         for i in range(4):
             width = (width - 1) // 2
             height = (height - 1) // 2
         self.mlp = nn.Sequential(
-            nn.Linear(64 * width * height, 256),
+            nn.Linear(256 * width * height, 256),
             nn.ReLU(inplace=True),
             nn.Linear(256, z_dim)
         )
@@ -159,24 +159,25 @@ class TransformerNet(nn.Module):
         # taken from the demo
         # TODO: adapt network architecture to problem specific implementation
         #       dimensionality should fit, but this might be completely wrong
+        # we need to constrain this far more
         self.localization = nn.Sequential(
-            nn.Conv2d(4, 32, kernel_size=7),
+            nn.Conv2d(4, 32, kernel_size=5),
             nn.MaxPool2d(2, stride=2),
             nn.ReLU(True),
-            nn.Conv2d(32, 32, kernel_size=5),
-            nn.MaxPool2d(2, stride=3),
-            nn.ReLU(True),
-            nn.Conv2d(32, 64, kernel_size=5),
-            nn.MaxPool2d(2, stride=3),
-            nn.ReLU(True),
-            nn.Conv2d(64, 64, kernel_size=3),
+            nn.Conv2d(32, 32, kernel_size=3),
             nn.MaxPool2d(2, stride=2),
-            nn.ReLU(True)
+            nn.ReLU(True),
+            nn.Conv2d(32, 32, kernel_size=3),
+            nn.MaxPool2d(2, stride=2),
+            nn.ReLU(True),
+            nn.Conv2d(32, 32, kernel_size=3),
+            nn.MaxPool2d(2, stride=2),
+            nn.ReLU(True),
         )
 
         # Regressor for the 3 * 2 affine matrix
         self.fc_loc = nn.Sequential(
-            nn.Linear(64, 32),
+            nn.Linear(18 * 64, 32),
             nn.ReLU(True),
             nn.Linear(32, 3 * 2)
         )
@@ -191,26 +192,18 @@ class TransformerNet(nn.Module):
         # for sigma
         self.encoder_net = EncoderNet(*conf.latent_dim, 2 * conf.z_dim)
         self.decoder_net = DecoderNet(*conf.latent_dim, conf.z_dim)
-        # self.mask_net = nn.Sequential(
-        #         nn.Conv2d(4,32,kernel_size=3,padding=1),
-        #         nn.ReLU(inplace=True),
-        #         nn.Conv2d(32,32,kernel_size=3,padding=1),
-        #         nn.ReLU(inplace=True),
-        #         nn.Conv2d(32,32,kernel_size=3,padding=1),
-        #         nn.ReLU(inplace=True),
-        #         )
-        # self.mlp = nn.Sequential(
-        #         nn.Linear(32 * self.latent_dim_x * self.latent_dim_y, self.latent_dim_x * self.latent_dim_y))
         self.mask_net = AttentionNet(self.conf)
 
+        if conf.parallel:
+            torch.set_default_tensor_type(torch.cuda.FloatTensor)
+
         self.theta_append = torch.Tensor([0., 0., 1.]).view(1,1,-1).repeat(self.batch_size,1,1)
-        print(self.theta_append)
 
     # Spatial transformer network forward function
     def stn(self, x):
         size = x.size()
         xs = self.localization(x)
-        xs = xs.view(-1, 64)
+        xs = xs.view(-1, 18 * 64)
         theta = self.fc_loc(xs)
         theta = theta.view(-1, 2, 3)
 
@@ -219,16 +212,15 @@ class TransformerNet(nn.Module):
 
         return x, theta
 
-    def invert_stn(self, x, theta, i):
-        # i manages whether a 3d or a 1d object is reconstructed
-        
-        # really ugly hack, since the pseudinverse is not implemented for
-        # batch wise computation
+    def invert_theta(self, theta, i):
         inverse_theta = torch.cat([theta, self.theta_append], dim=1).inverse()
         if i == 1:
             grid = F.affine_grid(inverse_theta[:, :2, :], self.original_size_1)
         elif i == 3:
             grid = F.affine_grid(inverse_theta[:, :2, :], self.original_size_3)
+        return grid
+
+    def invert_stn(self, x, grid):
         x = F.grid_sample(x, grid)
         return x
     
@@ -237,21 +229,13 @@ class TransformerNet(nn.Module):
         x_embedded = self.encoder_net(complete)
         # seperates the x vector into mu and sigma
         latent_mean = x_embedded[:, :self.z_dim]
-        latent_sigma = x_embedded[:, self.z_dim:]
+        latent_sigma = F.relu(x_embedded[:, self.z_dim:])
         return latent_mean, latent_sigma
 
     def decoder_network(self, z):
-        # print(z.size())
         return self.decoder_net(z)
 
     def mask_network(self, x, scope):
-        # print(x.size())
-        # print(scope.size())
-        # complete = torch.cat([x, scope], dim=1)
-        # mask = self.mask_net(complete)
-        # mask_dense = mask.view(-1,32 * self.latent_dim_x * self.latent_dim_y)
-        # mask_dense = self.mlp(mask_dense)
-        # return mask_dense.view(-1,1,self.latent_dim_x, self.latent_dim_y)
         return self.mask_net(x, scope)
 
     def forward(self, x, scope, i):
@@ -262,6 +246,12 @@ class TransformerNet(nn.Module):
         # seperate scope and picture
         x_zoom = x_zoom[:,:3,:,:]
         scope_zoom = x_zoom[:,2:4,:,:]
+
+        #print(torch.sum(x_zoom))
+        if torch.sum(x_zoom) > 0:
+            pass
+            # print(theta)
+            # exit()
 
         # build a mask over the cropped picture frame
         logits = self.mask_network(x_zoom, scope_zoom)
@@ -276,12 +266,6 @@ class TransformerNet(nn.Module):
         latent_mean, latent_sigma = self.encoder_network(x_zoom, mask * scope_zoom)
 
         # vae prior loss
-        # TODO: there is a mistake here, since the mask does not
-        # interact with the VAE, but it should given the code
-        # in the paper. I believe it's not that bad, since
-        # we have the spatial attention network, which already 
-        # represents a mask, but we should check that
-        # TODO: probably fixed by above
         dist = dists.Normal(latent_mean, latent_sigma)
         dist_0 = dists.Normal(0., latent_sigma)
         latent_vae = latent_mean + dist_0.sample()
@@ -294,18 +278,17 @@ class TransformerNet(nn.Module):
         mask_pred = x_recon[:, 3:]
         x_recon = x_recon[:, :3]
         
-        print(x_zoom.size())
-        print(x_recon.size())
-
         # project reconstruction and mask back into original space
-        mask = scope * self.invert_stn(mask, theta, 1)
-        mask_pred = self.invert_stn(mask_pred, theta, 1)
-        new_scope = self.invert_stn(scope, theta, 1)
+        grid1 = self.invert_theta(theta, 1)
+        grid3 = self.invert_theta(theta, 3)
+        mask = scope * self.invert_stn(mask, grid1)
+        mask_pred = self.invert_stn(mask_pred, grid1)
+        new_scope = self.invert_stn(scope, grid1)
         new_scope = scope * new_scope
         
-        x_recon = self.invert_stn(x_recon, theta, 3) * mask
-        
-        self.results_dict = {'reconstruction': x, 
+        x_recon = self.invert_stn(x_recon, grid3) * mask
+
+        self.results_dict = {'reconstruction': x_recon,
                 'mask': mask, 
                 'scope': new_scope, 
                 'latent': (latent_mean, latent_sigma, latent_vae, theta),
@@ -319,12 +302,12 @@ class Monet(nn.Module):
         super().__init__()
         self.conf = conf
         self.transformer_network = TransformerNet(conf, height, width)
-        self.beta = 0.5
-        self.gamma = 0.25
+        self.beta = 0.
+        self.gamma = 1
         self.width = width
         self.height = height
 
-        self.z_dim = 8
+        self.z_dim = conf.bg_dim
 
         self.bg_encoder = EncoderNet(width, height, 2 * self.z_dim)
         self.bg_decoder = DecoderNet(width, height, self.z_dim)
@@ -334,7 +317,8 @@ class Monet(nn.Module):
         x_embedded = self.bg_encoder(complete)
         # seperates the x vector into mu and sigma
         latent_mean = x_embedded[:, :self.z_dim]
-        latent_sigma = x_embedded[:, self.z_dim:]
+        # latent_sigma = x_embedded[:, self.z_dim:]
+        latent_sigma = F.relu(x_embedded[:, self.z_dim:])
         return latent_mean, latent_sigma
 
     def decoder_network(self, z):
@@ -358,17 +342,22 @@ class Monet(nn.Module):
             res = self.transformer_network.results_dict
             total_reconstruction += res['reconstruction']
             masks.append(res['mask'])
+            # print(torch.sum(res['mask']))
             scope = res['scope']
             latents.append(res['latent'])
             mask_preds.append(res['mask_pred'].view(-1, self.width, self.height))
-            print(res['mask'].size())
             kl_zs += res['kl_latent']
 
         ## now we might have some parts of the picture still unexplained
         ## these are predicted by a whole picture VAE, the background model
-        final_mask = sum(masks)
+        final_mask = 1 - sum(masks)
+        # print(torch.sum(final_mask))
         
         latent_mean, latent_sigma = self.encoder_network(x, final_mask)
+        
+        # print(latent_mean)
+        # print(latent_sigma)
+
         dist = dists.Normal(latent_mean, latent_sigma)
         dist_0 = dists.Normal(0., latent_sigma)
         latent_vae = latent_mean + dist_0.sample()
@@ -385,18 +374,19 @@ class Monet(nn.Module):
 
         masks.append(final_mask)
         mask_preds.append(final_mask_pred)
-        
-        print(final_mask.size())
-        print(final_x.size())
-        print(total_reconstruction.size())
-        full_reconstruction = final_mask * final_x + total_reconstruction
+
+        total_reconstruction = final_mask * final_x + total_reconstruction
         
         sigma = self.conf.bg_sigma if i == 0 else self.conf.fg_sigma
-        dist = dists.Normal(full_reconstruction, sigma)
+        dist = dists.Normal(total_reconstruction, sigma)
         p_x = dist.log_prob(x)
         p_x = torch.sum(p_x, [1, 2, 3])
         
         loss += -p_x + self.beta * kl_zs
+        print(loss)
+        print(-p_x)
+
+        # print(-p_x - loss)
 
         # mask loss
         masks = torch.cat(masks, 1)
@@ -406,24 +396,19 @@ class Monet(nn.Module):
         
         mask_preds = torch.stack(mask_preds, 3)
 
-        print(masks.size())
-        print(tr_masks.size())
-        print(mask_preds.size())
-        
         q_masks = dists.Categorical(probs=tr_masks)
         q_masks_recon = dists.Categorical(logits=mask_preds)
         
-        print(q_masks.probs.size())
-        print(q_masks_recon.probs.size())
-
         kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
         kl_masks = torch.sum(kl_masks, [1, 2])
         # print('px', p_xs.mean().item(),
         #       'kl_z', kl_zs.mean().item(),
         #       'kl masks', kl_masks.mean().item())
-        loss += self.gamma * kl_masks
+        #print(kl_masks)
+        #loss += self.gamma * kl_masks
 
         return {'loss': loss,
                 'masks': masks,
+                'reconstructions': total_reconstruction,
                 'latents': latents,}
 

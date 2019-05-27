@@ -164,8 +164,6 @@ class Monet(nn.Module):
             sigma = self.conf.bg_sigma if i == 0 else self.conf.fg_sigma
             p_x, x_recon, mask_pred = self.__decoder_step(x, z, mask, sigma)
             mask_preds.append(mask_pred)
-            print(mask.size())
-            print(mask_pred.size())
             loss += -p_x + self.beta * kl_z
             p_xs += -p_x
             kl_zs += kl_z
@@ -180,6 +178,7 @@ class Monet(nn.Module):
         print(masks.size())
         print(mask_preds.size())
         print(tr_masks.size())
+        exit()
 
         q_masks = dists.Categorical(probs=tr_masks)
         q_masks_recon = dists.Categorical(logits=mask_preds)

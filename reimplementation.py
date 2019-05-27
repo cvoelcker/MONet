@@ -1,38 +1,25 @@
 import collections
 
 import torch
-
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributions as dists
 
 from model import UNet
 
 
-ModelConfiguration = collections.namedtuple(
-        'ModelConfiguration', 
-        [
-            'component_latent_dim', 
-            'background_latent_dim', 
-            'latent_prior', 
-            'patch_shape', 
-            'image_shape',
-            'num_layers',
-            'bg_sigma',
-            'num_blocks',
-            'channel_base'
-            ])
-
-def create_coord_buffer(patch_size):
-    ys = torch.linspace(-1, 1, self.patch_shape[0])
-    xs = torch.linspace(-1, 1, self.patch_shape[1])
-    coord_map = torch.stack((ys, xs)).unsqueeze(0)
+def create_coord_buffer(patch_shape):
+    ys = torch.linspace(-1, 1, patch_shape[0])
+    xs = torch.linspace(-1, 1, patch_shape[1])
+    xv, yv = torch.meshgrid(ys, xs)
+    coord_map = torch.stack((xv, yv)).unsqueeze(0)
     return coord_map
 
 
 def differentiable_sampling(mean, sigma, prior_sigma):
     dist = dists.Normal(mean, sigma)
     dist_0 = dists.Normal(0., sigma)
-    z = latent_mean + dist_0.sample()
+    z = mean + dist_0.sample()
     kl_z = dists.kl_divergence(dist, dists.Normal(0., prior_sigma))
     kl_z = torch.sum(kl_z, 1)
     return z, kl_z
@@ -65,18 +52,19 @@ class EncoderNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, stride=2),
             )
-        conv_size = 64 * self.patch_shape[0]/(2**4) * self.patch_shape[1]/(2**4)
-        self.mlp = nn.Sequqential(
-                nn.Linear(conv_size, 2 * self.latent_dim),
+        self.conv_size = int(64 * self.patch_shape[0]/(2**4) * self.patch_shape[1]/(2**4))
+        self.mlp = nn.Sequential(
+                nn.Linear(self.conv_size, 2 * self.latent_dim),
                 nn.ReLU(inplace=True))
         self.mean_mlp = nn.Sequential(
                 nn.Linear(self.latent_dim, self.latent_dim))
         self.sigma_mlp = nn.Sequential(
                 nn.Linear(self.latent_dim, self.latent_dim),
-                nn.ReLU(inplace=True))
+                nn.Sigmoid())
 
     def forward(self, x):
         x = self.network(x)
+        x = x.view(-1, self.conv_size)
         x = self.mlp(x)
         mean = self.mean_mlp(x[:, :self.latent_dim])
         sigma = self.sigma_mlp(x[:, self.latent_dim:])
@@ -110,7 +98,7 @@ class DecoderNet(nn.Module):
         )
 
         # coordinate patching trick
-        coord_map = generate_coord_buffer(self.patch_shape)
+        coord_map = create_coord_buffer(self.patch_shape)
         self.register_buffer('coord_map_const', coord_map)
 
     def forward(self, x):
@@ -134,42 +122,39 @@ class SpatialLocalizationNet(nn.Module):
         self.image_shape = conf.image_shape
         self.patch_shape = conf.patch_shape
         self.batch_size = conf.batch_size
+        self.constrain_theta = conf.constrain_theta
         
         self.detection_network = nn.Sequential(
                 # block 1
-                nn.Conv2d(3 + 1 + 2, 16, 3, padding=(1,1)),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(16, 32, 3, padding=(1,1)),
+                nn.Conv2d(9, 5, 1),
+                nn.Conv2d(5, 32, 7, padding=(3,3)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 32, width/2, length/2
 
                 # block 2
-                nn.Conv2d(32, 32, 3, padding=(1,1)),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(32, 64, 3, padding=(1,1)),
+                nn.Conv2d(32, 32, 5, padding=(2,2)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 64, width/4, length/4
 
                 # block 3
-                nn.Conv2d(64, 64, 3, padding=(1,1)),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(64, 64, 3, padding=(1,1)),
+                nn.Conv2d(32, 3, 3, padding=(1,1)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 128, width/8 length/8
                 )
-        conv_size = 64 * self.image_shape[0]/8 * self.image_shape[1]/8
+        self.conv_size = int(3 * self.image_shape[0]/8 * self.image_shape[1]/8)
         self.theta_regression = nn.Sequential(
-                nn.Linear(conv_size, 128),
+                nn.Linear(self.conv_size, 128),
                 nn.ReLU(inplace=True),
                 nn.Linear(128, 6),
-                nn.Tanh(inplace=True)
+                #nn.LeakyReLU(inplace=True)
+                nn.Sigmoid()
                 )
         
         # coordinate patching trick
-        coord_map = generate_coord_buffer(self.image_shape)
+        coord_map = create_coord_buffer(self.image_shape).repeat(self.batch_size,1,1,1)
         self.register_buffer('coord_map_const', coord_map)
         
         # helper sizes for grid generation
@@ -179,22 +164,44 @@ class SpatialLocalizationNet(nn.Module):
         
         theta_append = torch.Tensor([0., 0., 1.]).view(1,1,-1).repeat(self.batch_size,1,1)
         self.register_buffer('theta_append', theta_append)
+        
+        theta_mean = torch.tensor([[[0.2, 0., 0.], [0., 0.2, 0.]]]).repeat(self.batch_size, 1, 1)
+        self.register_buffer('theta_mean', theta_mean)
+        theta_mask = torch.tensor([[[1., 1., 0.], [1., 1., 0.]]]).repeat(self.batch_size, 1, 1)
+        self.register_buffer('theta_mask', theta_mask)
+
+        constrain_mask = torch.tensor([[[0.05, 0., -0.05], [0., 0.05, -0.05]]]).repeat(self.batch_size, 1, 1)
+        self.register_buffer('constrain_mask', constrain_mask)
+        constrain_stretch = torch.tensor([[[1., 0., 18.], [0., 1., 18.]]]).repeat(self.batch_size, 1, 1)
+        self.register_buffer('constrain_stretch', constrain_stretch)
+
+        # self.theta_regression[2].weight.data.zero_()
+        self.theta_regression[2].bias.data.uniform_(-1., 1)
+        # self.theta_regression[2].bias.data.zero_()
+
+    def theta_restrict(self, theta):
+        return F.mse_loss(theta * self.theta_mask, self.theta_mean)
 
     def forward(self, x):
-        inp = torch.cat([x, coord_map], 1)
-        conv = self.network(inp)
+        inp = torch.cat([x, self.coord_map_const], 1)
+        conv = self.detection_network(inp)
+        conv = conv.view(-1, self.conv_size)
         theta = self.theta_regression(conv)
+        # theta = torch.matmul(theta, 1 - self.theta_mask) + 0.5 * theta 
         theta = theta.view(-1, 2, 3)
+        if self.constrain_theta:
+            theta = ((theta/10) + self.constrain_mask) * self.constrain_stretch
         grid = F.affine_grid(theta, self.latent_size)
-        return grid, theta
+        return theta, grid
 
     def transform(self, x, grid, theta):
         x = F.grid_sample(x, grid)
         return x
 
-    def invert(self, x, theta):
-        inverse_theta = torch.cat([theta, self.theta_append], dim=1).inverse()
-        i = x.size()[1]
+    def invert(self, x, theta, i):
+        theta_expanded = torch.cat([theta, self.theta_append], dim=1)
+        inverse_theta = theta_expanded.inverse()
+
         if i == 1:
             grid = F.affine_grid(inverse_theta[:, :2, :], self.original_size_1)
         elif i == 3:
@@ -232,25 +239,34 @@ class SpatialAutoEncoder(nn.Module):
         self.decoding_network = DecoderNet(conf)
         self.mask_network = MaskNet(conf)
         self.spatial_network = SpatialLocalizationNet(conf)
+        
+        self.x_reconstruction = None
+        self.mask_transformation = None
+        self.mask_prediction = None
+        self.scope = None
+        self.z = None
+        self.kl_z = None
+        self.theta_loss = None
 
     def forward(self, x):
         # calculate spatial position for object from joint mask
         # and image
         theta, grid = self.spatial_network(x)
+        theta_loss = self.spatial_network.theta_restrict(theta)
 
         # get patch from theta and grid
-        x_patch = self.spatial_network.transform(x, grid, theta)
+        x_patch = self.spatial_network.transform(x[:, :4, :, :], grid, theta)
 
         # generate object mask for patch
         # TODO: this seems highly questionable, check again
-        logits = self.mask_network(x_patch)
-        alpha = torch.softmax(logits, 1)
-        old_scope = x_patch[:, 1:, :, :]
+        alpha = self.mask_network(x_patch)
+        old_scope = x_patch[:, 3:, :, :]
+        x_patch = x_patch[:, :3, :, :]
         mask = old_scope * alpha[:, :1]
         new_scope = old_scope * alpha[:, 1:]
 
         # concatenate x and new mask
-        encoder_input = torch.cat(x_zoom, mask)
+        encoder_input = torch.cat([x_patch, mask], 1)
 
         # generate latent embedding of the patch
         mean, sigma = self.encoding_network(encoder_input)
@@ -263,14 +279,21 @@ class SpatialAutoEncoder(nn.Module):
         mask_pred = decoded[:, 3:, :, :]
 
         # transform all components into original space
-        x_reconstruction = self.spatial_network.invert(x, theta)
-        mask_transformation = self.spatial_network.invert(mask, theta)
-        mask_prediction = self.spatial_network.invert(mask_pred, theta)
+        x_reconstruction = self.spatial_network.invert(patch_reconstruction, theta, 3)
+        mask_transformation = self.spatial_network.invert(mask, theta, 1)
+        mask_prediction = self.spatial_network.invert(mask_pred, theta, 1)
         
-        scope = x[:, 3:, :, :]
-        scope -= mask_reconstruction
+        scope = x[:, 3:4, :, :]
+        scope = scope - mask_transformation
 
-        return x_reconstruction, mask_transformation, mask_prediction, scope, z, kl_z
+        self.x_reconstruction = x_reconstruction
+        self.mask_transformation = mask_transformation
+        self.mask_prediction = mask_prediction
+        self.scope = scope
+        self.z = z
+        self.kl_z = kl_z
+        self.theta_loss = theta_loss
+        return x_reconstruction
 
 
 class BackgroundEncoder(nn.Module):
@@ -279,14 +302,42 @@ class BackgroundEncoder(nn.Module):
     TODO: Currently completely stupid
     """
     def __init__(self, conf):
-        super.__init__()
+        super().__init__()
 
         self.image_shape = conf.image_shape
 
-
     def forward(self, x):
         loss = torch.zeros_like(x[:, 0, 0, 0])
-        return torch.zeros_like(x), loss
+        return torch.zeros_like(x[:, :3, :, :]), loss
+
+
+class VAEBackgroundModel(nn.Module):
+    """
+    Background encoder model which captures the rest of the picture
+    Not completely stupid anymore
+    """
+    def __init__(self, conf):
+        super().__init__()
+        fg_components = conf.component_latent_dim
+        patch_shape = conf.patch_shape
+        conf.component_latent_dim = 1
+        conf.patch_shape = (128, 128)
+        self.enc_net = EncoderNet(conf)
+        self.dec_net = DecoderNet(conf)
+        conf.component_latent_dim = fg_components
+        conf.patch_shape = patch_shape
+        self.image_shape = conf.image_shape
+        self.prior = 0.01
+
+    def forward(self, x, scope):
+        # concatenate x and new mask
+        encoder_input = torch.cat([x, scope], 1)
+
+        # generate latent embedding of the patch
+        mean, sigma = self.enc_net(encoder_input)
+        z, kl_z = differentiable_sampling(mean, sigma, self.prior)
+        decoded = self.dec_net(z)
+        return decoded[:, :, :, :], kl_z
 
 
 class MaskedAIR(nn.Module):
@@ -296,11 +347,18 @@ class MaskedAIR(nn.Module):
     def __init__(self, conf):
         super().__init__()
 
-        self.num_layers = conf.num_layers
         self.bg_sigma = conf.bg_sigma
 
         self.spatial_vae = SpatialAutoEncoder(conf)
-        self.background_model = BackgroundEncoder(conf)
+        # self.background_model = BackgroundEncoder(conf)
+        self.background_model = VAEBackgroundModel(conf)
+        self.mask_background = MaskNet(conf)
+
+        self.num_slots = conf.num_slots
+
+        self.beta = conf.beta
+        self.gamma = conf.gamma
+        self.kappa = 0.5
     
     def forward(self, x):
         scope = torch.ones_like(x[:, 0:1])
@@ -312,32 +370,70 @@ class MaskedAIR(nn.Module):
 
         loss = torch.zeros_like(x[:, 0, 0, 0])
         kl_zs = torch.zeros_like(loss)
-
+        theta_losses = torch.zeros_like(loss)
+        
+        # compute background at the beginning of the damn thing
+        # inp_background = torch.cat([x, scope], 1)
+        background_mask, kl_z = self.background_model(x, scope)
+        background = background_mask[:, :3, :, :]
+        mask_channel = background_mask[:, 3:, :, :]
+        mask_input = torch.cat([x, scope], 1)
+        alpha = self.mask_background(mask_input)
+        mask = scope * alpha[:, :1]
+        scope = scope * alpha[:, 1:]
+        masks.append(mask)
+        mask_preds.append(mask_channel)
+        kl_zs += kl_z
+        total_reconstruction += background * mask
         # construct the patchwise shaping of the model
-        for i in range(self.conf.num_slots-1):
-            inp = torch.cat([x, scope], 1)
-            x_recon, mask, mask_pred, scope, z, kl_z = self.spatial_vae(inp)
-            total_reconstruction += mask * x_recon
+        for i in range(self.num_slots):
+            inp = torch.cat([x, scope, total_reconstruction], 1)
+            x_recon = self.spatial_vae(inp)
+            mask = self.spatial_vae.mask_transformation
+            mask_pred = self.spatial_vae.mask_prediction
+            scope = self.spatial_vae.scope
+            z = self.spatial_vae.z
+            kl_z = self.spatial_vae.kl_z
+            theta_losses = theta_losses + self.spatial_vae.theta_loss
+            total_reconstruction = total_reconstruction + mask * x_recon
             masks.append(mask)
             mask_preds.append(mask_pred)
             latents.append(z)
             kl_zs += kl_z
-        
-        # compute background
-        inp_background = torch.cat([x, scope], 1)
-        background, kl_z = self.background_model(inp_background)
-        kl_zs += kl_z
-        total_reconstruction += background * scope
+       
+        # torchify all lists
+        masks = torch.cat(masks, 1)
+        latents = torch.cat(latents, 1)
+
+        # # compute background
+        # inp_background = torch.cat([x, scope], 1)
+        # background, kl_z = self.background_model(x, scope)
+        # kl_zs += kl_z
+        # total_reconstruction += background[:, :3, :, :] * scope
 
         # compute reconstruction loss
         dist = dists.Normal(total_reconstruction, self.bg_sigma)
         p_x = dist.log_prob(x)
         p_x = torch.sum(p_x, [1, 2, 3])
+
+        loss += -p_x + self.beta * kl_zs #+ self.gamma * theta_losses
         
-        loss += -p_x + self.beta * kl_zs
+        mask_preds = torch.cat(mask_preds, 1)
+        tr_masks = torch.transpose(masks, 1, 3)
+        tr_masks = torch.transpose(tr_masks, 1, 2)
+        tr_mask_preds = torch.transpose(mask_preds, 1, 3)
+        tr_mask_preds = torch.transpose(tr_mask_preds, 1, 2)
+
+        q_masks = dists.Categorical(probs=tr_masks)
+        q_masks_recon = dists.Categorical(logits=tr_mask_preds)
+        kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
+        kl_masks = torch.sum(kl_masks, [1, 2])
+        
+        loss += self.kappa * kl_masks
         
         # currently missing is the mask reconstruction loss
         return {'loss': loss,
                 'reconstructions': total_reconstruction,
+                'reconstruction_loss': p_x,
                 'masks': masks,
                 'latents': latents,}

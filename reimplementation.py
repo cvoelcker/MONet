@@ -235,6 +235,8 @@ class SpatialAutoEncoder(nn.Module):
     def __init__(self, conf):
         super().__init__()
         self.prior = conf.latent_prior
+        self.fg_sigma = conf.fg_sigma
+
         self.encoding_network = EncoderNet(conf)
         self.decoding_network = DecoderNet(conf)
         self.mask_network = MaskNet(conf)
@@ -247,6 +249,7 @@ class SpatialAutoEncoder(nn.Module):
         self.z = None
         self.kl_z = None
         self.theta_loss = None
+        self.p_x = None
 
     def forward(self, x):
         # calculate spatial position for object from joint mask
@@ -286,6 +289,26 @@ class SpatialAutoEncoder(nn.Module):
         scope = x[:, 3:4, :, :]
         scope = scope - mask_transformation
 
+        # calculate reconstruction error
+        dist = dists.Normal(x * mask_transformation, self.fg_sigma)
+        p_x = dist.log_prob(x_reconstruction)
+        p_x = torch.sum(p_x, [1, 2, 3])
+
+        # calculate mask prediction error
+        tr_masks = torch.transpose(mask_transformation, 1, 3)
+        tr_masks = torch.transpose(tr_masks, 1, 2)
+        tr_mask_preds = torch.transpose(mask_prediction, 1, 3)
+        tr_mask_preds = torch.transpose(tr_mask_preds, 1, 2)
+
+        q_masks = dists.Categorical(probs=tr_masks)
+        q_masks_recon = dists.Categorical(logits=tr_mask_preds)
+        kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
+        kl_masks = torch.sum(kl_masks, [1, 2])
+        print(kl_masks)
+        
+        loss += self.kappa * kl_masks
+
+
         self.x_reconstruction = x_reconstruction
         self.mask_transformation = mask_transformation
         self.mask_prediction = mask_prediction
@@ -293,6 +316,7 @@ class SpatialAutoEncoder(nn.Module):
         self.z = z
         self.kl_z = kl_z
         self.theta_loss = theta_loss
+        self.p_x = p_x
         return x_reconstruction
 
 

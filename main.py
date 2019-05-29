@@ -43,7 +43,7 @@ def visualize_masks(imgs, masks, recons, vis):
 
 
 def run_training(monet, conf, trainloader):
-    vis = visdom.Visdom(env = conf.visdom_env)
+    vis = visdom.Visdom(env = conf.visdom_env, port=8456)
     if conf.load_parameters and os.path.isfile(conf.checkpoint_file):
         monet.load_state_dict(torch.load(conf.checkpoint_file))
         print('Restored parameters from', conf.checkpoint_file)
@@ -87,7 +87,7 @@ def run_training(monet, conf, trainloader):
                                 vis)
         torch.save(monet.state_dict(), conf.checkpoint_file)
         print(np.mean(epoch_loss))
-        print(np.mean(epoch_reconstruction_loss))
+        print(-1 * np.mean(epoch_reconstruction_loss))
         pickle.dump(all_gradients, open('gradients.save', 'wb'))
 
 
@@ -256,7 +256,8 @@ def reimplementation_experiment():
                                               batch_size=run_conf.batch_size,
                                               shuffle=True, num_workers=8)
     if run_conf.parallel:
-        torch.cuda.set_device(1)
+        device_id = 0
+        torch.cuda.set_device(device_id)
         if run_conf.summarize:
             b_s = model_conf.batch_size
             # model_conf.batch_size = 2
@@ -265,7 +266,7 @@ def reimplementation_experiment():
             model_conf.batch_size = b_s
         monet = reimplementation.MaskedAIR(model_conf).cuda()
         sum([param.nelement() for param in monet.parameters()])
-        monet = nn.DataParallel(monet, device_ids=[3])
+        monet = nn.DataParallel(monet, device_ids=[device_id])
     run_training(monet, run_conf, trainloader)
 
 

@@ -1,4 +1,5 @@
 import collections
+import pickle
 
 import torch
 import torch.nn as nn
@@ -16,6 +17,15 @@ def create_coord_buffer(patch_shape):
     return coord_map
 
 
+def alternate_inverse(theta):
+    inv_theta = torch.zeros_like(theta)
+    inv_theta[:, 0, 0] = 1/theta[:, 0, 0]
+    inv_theta[:, 1, 1] = 1/theta[:, 1, 1]
+    inv_theta[:, 0, 2] = -theta[:, 0, 2]/theta[:, 0, 0]
+    inv_theta[:, 1, 2] = -theta[:, 1, 2]/theta[:, 1, 1]
+    return inv_theta
+
+
 def differentiable_sampling(mean, sigma, prior_sigma):
     dist = dists.Normal(mean, sigma)
     dist_0 = dists.Normal(0., sigma)
@@ -23,6 +33,30 @@ def differentiable_sampling(mean, sigma, prior_sigma):
     kl_z = dists.kl_divergence(dist, dists.Normal(0., prior_sigma))
     kl_z = torch.sum(kl_z, 1)
     return z, kl_z
+
+
+def reconstruction_likelihood(x, recon, mask, sigma):
+    dist = dists.Normal(x, sigma)
+    p_x = dist.log_prob(recon)
+    p_x = torch.sum(p_x * mask, [1, 2, 3])
+    return p_x
+
+
+def kl_mask(mask, mask_pred):
+    tr_masks = torch.transpose(mask, 1, 3)
+    tr_masks = torch.transpose(tr_masks, 1, 2) + 0.0001
+    tr_mask_preds = torch.transpose(mask_pred, 1, 3)
+    tr_mask_preds = torch.transpose(tr_mask_preds, 1, 2)
+
+    q_masks = dists.Categorical(probs=tr_masks)
+    q_masks_recon = dists.Categorical(logits=tr_mask_preds)
+    kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
+    kl_masks = torch.sum(kl_masks, [1, 2])
+    if torch.any(torch.isnan(kl_masks)):
+        pickle.dump(tr_masks.cpu().data.numpy(), open('save_tr_mask_failed', 'wb'))
+        pickle.dump(tr_mask_preds.cpu().data.numpy(), open('save_tr_mask_preds_failed', 'wb'))
+        raise ValueError
+    return kl_masks
 
 
 class EncoderNet(nn.Module):
@@ -126,30 +160,28 @@ class SpatialLocalizationNet(nn.Module):
         
         self.detection_network = nn.Sequential(
                 # block 1
-                nn.Conv2d(9, 5, 1),
-                nn.Conv2d(5, 32, 7, padding=(3,3)),
+                nn.Conv2d(9, 8, 3, padding=(1,1)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 32, width/2, length/2
 
                 # block 2
-                nn.Conv2d(32, 32, 5, padding=(2,2)),
+                nn.Conv2d(8, 16, 3, padding=(1,1)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 64, width/4, length/4
 
                 # block 3
-                nn.Conv2d(32, 3, 3, padding=(1,1)),
+                nn.Conv2d(16, 32, 3, padding=(1,1)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 128, width/8 length/8
                 )
-        self.conv_size = int(3 * self.image_shape[0]/8 * self.image_shape[1]/8)
+        self.conv_size = int(32 * self.image_shape[0]/8 * self.image_shape[1]/8)
         self.theta_regression = nn.Sequential(
-                nn.Linear(self.conv_size, 128),
-                nn.ReLU(inplace=True),
-                nn.Linear(128, 6),
-                #nn.LeakyReLU(inplace=True)
+                nn.Linear(self.conv_size, 6),
+                # nn.ReLU(inplace=True),
+                # nn.Linear(128, 6),
                 nn.Sigmoid()
                 )
         
@@ -162,35 +194,32 @@ class SpatialLocalizationNet(nn.Module):
         self.original_size_3 = torch.Size((self.batch_size, 3, *self.image_shape))
         self.original_size_1 = torch.Size((self.batch_size, 1, *self.image_shape))
         
-        theta_append = torch.Tensor([0., 0., 1.]).view(1,1,-1).repeat(self.batch_size,1,1)
+        theta_append = torch.Tensor([0., 0., 1.]).view(1,1,-1)#.repeat(self.batch_size,1,1)
         self.register_buffer('theta_append', theta_append)
         
-        theta_mean = torch.tensor([[[0.2, 0., 0.], [0., 0.2, 0.]]]).repeat(self.batch_size, 1, 1)
+        theta_mean = torch.tensor([[[0.2, 0., 0.], [0., 0.2, 0.]]])#.repeat(self.batch_size, 1, 1)
         self.register_buffer('theta_mean', theta_mean)
-        theta_mask = torch.tensor([[[1., 1., 0.], [1., 1., 0.]]]).repeat(self.batch_size, 1, 1)
+        theta_mask = torch.tensor([[[1., 1., 0.], [1., 1., 0.]]])#.repeat(self.batch_size, 1, 1)
         self.register_buffer('theta_mask', theta_mask)
 
-        constrain_mask = torch.tensor([[[0.05, 0., -0.05], [0., 0.05, -0.05]]]).repeat(self.batch_size, 1, 1)
+        constrain_mask = torch.tensor([[[0.5, 0., -0.5], [0., 0.5, -0.5]]])#.repeat(self.batch_size, 1, 1)
         self.register_buffer('constrain_mask', constrain_mask)
-        constrain_stretch = torch.tensor([[[1., 0., 18.], [0., 1., 18.]]]).repeat(self.batch_size, 1, 1)
+        constrain_stretch = torch.tensor([[[0.1, 0., 2.], [0., 0.1, 2.]]])#.repeat(self.batch_size, 1, 1)
         self.register_buffer('constrain_stretch', constrain_stretch)
-
-        # self.theta_regression[2].weight.data.zero_()
-        self.theta_regression[2].bias.data.uniform_(-1., 1)
-        # self.theta_regression[2].bias.data.zero_()
 
     def theta_restrict(self, theta):
         return F.mse_loss(theta * self.theta_mask, self.theta_mean)
 
     def forward(self, x):
         inp = torch.cat([x, self.coord_map_const], 1)
+        # inp = inp.view(-1, 6 * 128 * 128)
         conv = self.detection_network(inp)
         conv = conv.view(-1, self.conv_size)
         theta = self.theta_regression(conv)
         # theta = torch.matmul(theta, 1 - self.theta_mask) + 0.5 * theta 
         theta = theta.view(-1, 2, 3)
         if self.constrain_theta:
-            theta = ((theta/10) + self.constrain_mask) * self.constrain_stretch
+            theta = ((theta) + self.constrain_mask) * self.constrain_stretch
         grid = F.affine_grid(theta, self.latent_size)
         return theta, grid
 
@@ -199,8 +228,9 @@ class SpatialLocalizationNet(nn.Module):
         return x
 
     def invert(self, x, theta, i):
-        theta_expanded = torch.cat([theta, self.theta_append], dim=1)
-        inverse_theta = theta_expanded.inverse()
+        # theta_expanded = torch.cat([theta, self.theta_append.repeat(x.size()[0], 1, 1)], dim=1)
+        # inverse_theta = theta_expanded.inverse()
+        inverse_theta = alternate_inverse(theta)
 
         if i == 1:
             grid = F.affine_grid(inverse_theta[:, :2, :], self.original_size_1)
@@ -250,6 +280,7 @@ class SpatialAutoEncoder(nn.Module):
         self.kl_z = None
         self.theta_loss = None
         self.p_x = None
+        self.kl_mask = None
 
     def forward(self, x):
         # calculate spatial position for object from joint mask
@@ -290,25 +321,12 @@ class SpatialAutoEncoder(nn.Module):
         scope = scope - mask_transformation
 
         # calculate reconstruction error
-        dist = dists.Normal(x * mask_transformation, self.fg_sigma)
-        p_x = dist.log_prob(x_reconstruction)
-        p_x = torch.sum(p_x, [1, 2, 3])
+        p_x = reconstruction_likelihood(x[:, :3], x_reconstruction, 
+                mask_transformation, self.fg_sigma)
 
         # calculate mask prediction error
-        tr_masks = torch.transpose(mask_transformation, 1, 3)
-        tr_masks = torch.transpose(tr_masks, 1, 2)
-        tr_mask_preds = torch.transpose(mask_prediction, 1, 3)
-        tr_mask_preds = torch.transpose(tr_mask_preds, 1, 2)
-
-        q_masks = dists.Categorical(probs=tr_masks)
-        q_masks_recon = dists.Categorical(logits=tr_mask_preds)
-        kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
-        kl_masks = torch.sum(kl_masks, [1, 2])
-        print(kl_masks)
+        kl_mask_pred = kl_mask(mask_transformation, mask_prediction)
         
-        loss += self.kappa * kl_masks
-
-
         self.x_reconstruction = x_reconstruction
         self.mask_transformation = mask_transformation
         self.mask_prediction = mask_prediction
@@ -317,6 +335,7 @@ class SpatialAutoEncoder(nn.Module):
         self.kl_z = kl_z
         self.theta_loss = theta_loss
         self.p_x = p_x
+        self.kl_mask = kl_mask_pred
         return x_reconstruction
 
 
@@ -385,19 +404,22 @@ class MaskedAIR(nn.Module):
         self.kappa = 0.5
     
     def forward(self, x):
-        scope = torch.ones_like(x[:, 0:1])
+        # initialize arrays for visualization
         masks = []
         latents = []
         mask_preds = []
 
+        # initialize loss components
+        scope = torch.ones_like(x[:, 0:1])
         total_reconstruction = torch.zeros_like(x)
 
         loss = torch.zeros_like(x[:, 0, 0, 0])
         kl_zs = torch.zeros_like(loss)
         theta_losses = torch.zeros_like(loss)
+        kl_masks = torch.zeros_like(loss)
+        p_x_loss = torch.zeros_like(loss)
         
         # compute background at the beginning of the damn thing
-        # inp_background = torch.cat([x, scope], 1)
         background_mask, kl_z = self.background_model(x, scope)
         background = background_mask[:, :3, :, :]
         mask_channel = background_mask[:, 3:, :, :]
@@ -407,25 +429,38 @@ class MaskedAIR(nn.Module):
         scope = scope * alpha[:, 1:]
         masks.append(mask)
         mask_preds.append(mask_channel)
+        print(kl_z)
         kl_zs += kl_z
         total_reconstruction += background * mask
+        
+        # calculate reconstruction error
+        p_x_loss += reconstruction_likelihood(x, background, 
+                mask, self.bg_sigma)
+
+        # calculate mask prediction error
+        kl_masks += kl_mask(mask, mask_channel)
+
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
-            inp = torch.cat([x, scope, total_reconstruction], 1)
+            inp = torch.cat([x, scope, x-total_reconstruction], 1)
             x_recon = self.spatial_vae(inp)
             mask = self.spatial_vae.mask_transformation
             mask_pred = self.spatial_vae.mask_prediction
             scope = self.spatial_vae.scope
             z = self.spatial_vae.z
-            kl_z = self.spatial_vae.kl_z
+            kl_zs += self.spatial_vae.kl_z
+            p_x_loss += self.spatial_vae.p_x
+            kl_masks += self.spatial_vae.kl_mask
             theta_losses = theta_losses + self.spatial_vae.theta_loss
             total_reconstruction = total_reconstruction + mask * x_recon
+            
+            # save for visualization
             masks.append(mask)
             mask_preds.append(mask_pred)
             latents.append(z)
-            kl_zs += kl_z
        
         # torchify all lists
+        masks.append(scope)
         masks = torch.cat(masks, 1)
         latents = torch.cat(latents, 1)
 
@@ -435,29 +470,19 @@ class MaskedAIR(nn.Module):
         # kl_zs += kl_z
         # total_reconstruction += background[:, :3, :, :] * scope
 
-        # compute reconstruction loss
-        dist = dists.Normal(total_reconstruction, self.bg_sigma)
-        p_x = dist.log_prob(x)
-        p_x = torch.sum(p_x, [1, 2, 3])
+        # calculate reconstruction error
+        p_x_loss += reconstruction_likelihood(x, total_reconstruction, 
+                torch.ones_like(scope), self.bg_sigma)
 
-        loss += -p_x + self.beta * kl_zs #+ self.gamma * theta_losses
+        # get mask entropy loss
+        entropy = F.softmax(masks, 1) * F.log_softmax(masks, 1)
+        entropy = -1.0 * torch.mean(torch.sum(entropy, 1), [1,2])
         
-        mask_preds = torch.cat(mask_preds, 1)
-        tr_masks = torch.transpose(masks, 1, 3)
-        tr_masks = torch.transpose(tr_masks, 1, 2)
-        tr_mask_preds = torch.transpose(mask_preds, 1, 3)
-        tr_mask_preds = torch.transpose(tr_mask_preds, 1, 2)
-
-        q_masks = dists.Categorical(probs=tr_masks)
-        q_masks_recon = dists.Categorical(logits=tr_mask_preds)
-        kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
-        kl_masks = torch.sum(kl_masks, [1, 2])
-        
-        loss += self.kappa * kl_masks
+        loss += - p_x_loss + self.beta * kl_zs + self.kappa * kl_masks + entropy
         
         # currently missing is the mask reconstruction loss
         return {'loss': loss,
                 'reconstructions': total_reconstruction,
-                'reconstruction_loss': p_x,
+                'reconstruction_loss': p_x_loss,
                 'masks': masks,
                 'latents': latents,}

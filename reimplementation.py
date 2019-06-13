@@ -44,19 +44,37 @@ def reconstruction_likelihood(x, recon, mask, sigma):
 
 def kl_mask(mask, mask_pred):
     tr_masks = torch.transpose(mask, 1, 3)
-    tr_masks = torch.transpose(tr_masks, 1, 2) + 0.0001
+    tr_masks = (torch.transpose(tr_masks, 1, 2) + 0.0001).squeeze()
     tr_mask_preds = torch.transpose(mask_pred, 1, 3)
-    tr_mask_preds = torch.transpose(tr_mask_preds, 1, 2)
+    tr_mask_preds = torch.transpose(tr_mask_preds, 1, 2).squeeze()
 
     q_masks = dists.Categorical(probs=tr_masks)
     q_masks_recon = dists.Categorical(logits=tr_mask_preds)
     kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
-    kl_masks = torch.sum(kl_masks, [1, 2])
+    kl_masks = torch.sum(kl_masks, [1])
     if torch.any(torch.isnan(kl_masks)):
         pickle.dump(tr_masks.cpu().data.numpy(), open('save_tr_mask_failed', 'wb'))
         pickle.dump(tr_mask_preds.cpu().data.numpy(), open('save_tr_mask_preds_failed', 'wb'))
         raise ValueError
     return kl_masks
+    
+
+def transform(x, grid, theta):
+    x = F.grid_sample(x, grid)
+    return x
+
+
+def invert(x, theta, image_shape):
+    # theta_expanded = torch.cat([theta, self.theta_append.repeat(x.size()[0], 1, 1)], dim=1)
+    # inverse_theta = theta_expanded.inverse()
+    inverse_theta = alternate_inverse(theta)
+    if x.size()[1] == 1:
+        size = torch.Size((x.size()[0], 1, *image_shape))
+    elif x.size()[1] == 3:
+        size = torch.Size((x.size()[0], 3, *image_shape))
+    grid = F.affine_grid(inverse_theta, size)
+    x = F.grid_sample(x, grid)
+    return x
 
 
 class EncoderNet(nn.Module):
@@ -157,31 +175,32 @@ class SpatialLocalizationNet(nn.Module):
         self.patch_shape = conf.patch_shape
         self.batch_size = conf.batch_size
         self.constrain_theta = conf.constrain_theta
+        self.num_slots = conf.num_slots
         
         self.detection_network = nn.Sequential(
                 # block 1
-                nn.Conv2d(9, 8, 3, padding=(1,1)),
+                nn.Conv2d(9, 16, 3, padding=(1,1)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 32, width/2, length/2
 
                 # block 2
-                nn.Conv2d(8, 16, 3, padding=(1,1)),
+                nn.Conv2d(16, 32, 3, padding=(1,1)),
                 nn.ReLU(inplace=True),
                 nn.MaxPool2d(2, stride=2),
                 # output size = 64, width/4, length/4
 
-                # block 3
-                nn.Conv2d(16, 32, 3, padding=(1,1)),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(2, stride=2),
-                # output size = 128, width/8 length/8
-                )
-        self.conv_size = int(32 * self.image_shape[0]/8 * self.image_shape[1]/8)
-        self.theta_regression = nn.Sequential(
-                nn.Linear(self.conv_size, 6),
+                # # block 3
+                # nn.Conv2d(23, 32, 3, padding=(1,1)),
                 # nn.ReLU(inplace=True),
-                # nn.Linear(128, 6),
+                # nn.MaxPool2d(2, stride=2),
+                # # output size = 128, width/8 length/8
+                )
+        self.conv_size = int(32 * self.image_shape[0]/4 * self.image_shape[1]/4)
+        self.theta_regression = nn.Sequential(
+                nn.Linear(self.conv_size, 128, bias=False),
+                nn.ReLU(inplace=True),
+                nn.Linear(128, 6 * self.num_slots, bias=False),
                 nn.Sigmoid()
                 )
         
@@ -189,19 +208,6 @@ class SpatialLocalizationNet(nn.Module):
         coord_map = create_coord_buffer(self.image_shape).repeat(self.batch_size,1,1,1)
         self.register_buffer('coord_map_const', coord_map)
         
-        # helper sizes for grid generation
-        self.latent_size = torch.Size((self.batch_size, 4, *self.patch_shape))
-        self.original_size_3 = torch.Size((self.batch_size, 3, *self.image_shape))
-        self.original_size_1 = torch.Size((self.batch_size, 1, *self.image_shape))
-        
-        theta_append = torch.Tensor([0., 0., 1.]).view(1,1,-1)#.repeat(self.batch_size,1,1)
-        self.register_buffer('theta_append', theta_append)
-        
-        theta_mean = torch.tensor([[[0.2, 0., 0.], [0., 0.2, 0.]]])#.repeat(self.batch_size, 1, 1)
-        self.register_buffer('theta_mean', theta_mean)
-        theta_mask = torch.tensor([[[1., 1., 0.], [1., 1., 0.]]])#.repeat(self.batch_size, 1, 1)
-        self.register_buffer('theta_mask', theta_mask)
-
         constrain_mask = torch.tensor([[[0.5, 0., -0.5], [0., 0.5, -0.5]]])#.repeat(self.batch_size, 1, 1)
         self.register_buffer('constrain_mask', constrain_mask)
         constrain_stretch = torch.tensor([[[0.1, 0., 2.], [0., 0.1, 2.]]])#.repeat(self.batch_size, 1, 1)
@@ -212,32 +218,14 @@ class SpatialLocalizationNet(nn.Module):
 
     def forward(self, x):
         inp = torch.cat([x, self.coord_map_const], 1)
-        # inp = inp.view(-1, 6 * 128 * 128)
         conv = self.detection_network(inp)
         conv = conv.view(-1, self.conv_size)
         theta = self.theta_regression(conv)
-        # theta = torch.matmul(theta, 1 - self.theta_mask) + 0.5 * theta 
-        theta = theta.view(-1, 2, 3)
+        theta = theta.view(-1, self.num_slots, 2, 3)
         if self.constrain_theta:
             theta = ((theta) + self.constrain_mask) * self.constrain_stretch
-        grid = F.affine_grid(theta, self.latent_size)
-        return theta, grid
+        return theta
 
-    def transform(self, x, grid, theta):
-        x = F.grid_sample(x, grid)
-        return x
-
-    def invert(self, x, theta, i):
-        # theta_expanded = torch.cat([theta, self.theta_append.repeat(x.size()[0], 1, 1)], dim=1)
-        # inverse_theta = theta_expanded.inverse()
-        inverse_theta = alternate_inverse(theta)
-
-        if i == 1:
-            grid = F.affine_grid(inverse_theta[:, :2, :], self.original_size_1)
-        elif i == 3:
-            grid = F.affine_grid(inverse_theta[:, :2, :], self.original_size_3)
-        x = F.grid_sample(x, grid)
-        return x
 
 
 class MaskNet(nn.Module):
@@ -266,11 +254,13 @@ class SpatialAutoEncoder(nn.Module):
         super().__init__()
         self.prior = conf.latent_prior
         self.fg_sigma = conf.fg_sigma
+        self.patch_shape = conf.patch_shape
+        self.image_shape = conf.image_shape
 
         self.encoding_network = EncoderNet(conf)
         self.decoding_network = DecoderNet(conf)
         self.mask_network = MaskNet(conf)
-        self.spatial_network = SpatialLocalizationNet(conf)
+        # self.spatial_network = SpatialLocalizationNet(conf)
         
         self.x_reconstruction = None
         self.mask_transformation = None
@@ -282,14 +272,13 @@ class SpatialAutoEncoder(nn.Module):
         self.p_x = None
         self.kl_mask = None
 
-    def forward(self, x):
+    def forward(self, x, theta):
         # calculate spatial position for object from joint mask
         # and image
-        theta, grid = self.spatial_network(x)
-        theta_loss = self.spatial_network.theta_restrict(theta)
+        grid = F.affine_grid(theta, torch.Size((x.size()[0], 4, *self.patch_shape)))
 
         # get patch from theta and grid
-        x_patch = self.spatial_network.transform(x[:, :4, :, :], grid, theta)
+        x_patch = transform(x[:, :4, :, :], grid, theta)
 
         # generate object mask for patch
         # TODO: this seems highly questionable, check again
@@ -313,9 +302,9 @@ class SpatialAutoEncoder(nn.Module):
         mask_pred = decoded[:, 3:, :, :]
 
         # transform all components into original space
-        x_reconstruction = self.spatial_network.invert(patch_reconstruction, theta, 3)
-        mask_transformation = self.spatial_network.invert(mask, theta, 1)
-        mask_prediction = self.spatial_network.invert(mask_pred, theta, 1)
+        x_reconstruction = invert(patch_reconstruction, theta, self.image_shape)
+        mask_transformation = invert(mask, theta, self.image_shape)
+        mask_prediction = invert(mask_pred, theta, self.image_shape)
         
         scope = x[:, 3:4, :, :]
         scope = scope - mask_transformation
@@ -333,7 +322,6 @@ class SpatialAutoEncoder(nn.Module):
         self.scope = scope
         self.z = z
         self.kl_z = kl_z
-        self.theta_loss = theta_loss
         self.p_x = p_x
         self.kl_mask = kl_mask_pred
         return x_reconstruction
@@ -396,6 +384,7 @@ class MaskedAIR(nn.Module):
         # self.background_model = BackgroundEncoder(conf)
         self.background_model = VAEBackgroundModel(conf)
         self.mask_background = MaskNet(conf)
+        self.spatial_localization_net = SpatialLocalizationNet(conf)
 
         self.num_slots = conf.num_slots
 
@@ -411,11 +400,12 @@ class MaskedAIR(nn.Module):
 
         # initialize loss components
         scope = torch.ones_like(x[:, 0:1])
+        all_scopes = []
         total_reconstruction = torch.zeros_like(x)
 
         loss = torch.zeros_like(x[:, 0, 0, 0])
         kl_zs = torch.zeros_like(loss)
-        theta_losses = torch.zeros_like(loss)
+        # theta_losses = torch.zeros_like(loss)
         kl_masks = torch.zeros_like(loss)
         p_x_loss = torch.zeros_like(loss)
         
@@ -427,9 +417,9 @@ class MaskedAIR(nn.Module):
         alpha = self.mask_background(mask_input)
         mask = scope * alpha[:, :1]
         scope = scope * alpha[:, 1:]
+        all_scopes.append(scope)
         masks.append(mask)
         mask_preds.append(mask_channel)
-        print(kl_z)
         kl_zs += kl_z
         total_reconstruction += background * mask
         
@@ -440,18 +430,24 @@ class MaskedAIR(nn.Module):
         # calculate mask prediction error
         kl_masks += kl_mask(mask, mask_channel)
 
+        # get all thetas at once
+        inp = torch.cat([x, x - total_reconstruction, scope], 1)
+        thetas = self.spatial_localization_net(inp)
+
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
+            theta = thetas[:, i]
+            scope = all_scopes[-1]
             inp = torch.cat([x, scope, x-total_reconstruction], 1)
-            x_recon = self.spatial_vae(inp)
+            x_recon = self.spatial_vae(inp, theta)
             mask = self.spatial_vae.mask_transformation
             mask_pred = self.spatial_vae.mask_prediction
-            scope = self.spatial_vae.scope
+            all_scopes.append(self.spatial_vae.scope)
             z = self.spatial_vae.z
             kl_zs += self.spatial_vae.kl_z
             p_x_loss += self.spatial_vae.p_x
             kl_masks += self.spatial_vae.kl_mask
-            theta_losses = theta_losses + self.spatial_vae.theta_loss
+            # theta_losses = theta_losses + self.spatial_vae.theta_loss
             total_reconstruction = total_reconstruction + mask * x_recon
             
             # save for visualization
@@ -460,6 +456,7 @@ class MaskedAIR(nn.Module):
             latents.append(z)
        
         # torchify all lists
+        scope = all_scopes[-1]
         masks.append(scope)
         masks = torch.cat(masks, 1)
         latents = torch.cat(latents, 1)
@@ -476,9 +473,9 @@ class MaskedAIR(nn.Module):
 
         # get mask entropy loss
         entropy = F.softmax(masks, 1) * F.log_softmax(masks, 1)
-        entropy = -1.0 * torch.mean(torch.sum(entropy, 1), [1,2])
+        entropy = -100.0 * torch.mean(torch.sum(entropy, 1), [1,2])
         
-        loss += - p_x_loss + self.beta * kl_zs + self.kappa * kl_masks + entropy
+        loss += - p_x_loss + entropy + self.beta * kl_zs# + self.kappa * kl_masks
         
         # currently missing is the mask reconstruction loss
         return {'loss': loss,

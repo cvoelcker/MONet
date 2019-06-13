@@ -129,7 +129,9 @@ class Atari(Dataset):
             with gzip.open(imgpath, 'rb') as f:
                 img = dill.load(f)
                 dataset.append(img)
-        return np.random.shuffle(np.concatenate(dataset, axis=0))
+        dataset = np.concatenate(dataset, axis=0)
+        np.random.shuffle(dataset)
+        return dataset
 
     def __getitem__(self, idx):
         img = Image.fromarray(self.dataset[idx])

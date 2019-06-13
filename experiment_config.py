@@ -19,19 +19,20 @@ parser.add_argument('--gamma', type=float, default=100000.)
 MaskedAIRModelConfiguration = recordtype(
         'MaskedAIRModelConfiguration', 
         [
-            ('component_latent_dim', 16),
-            ('background_latent_dim', 4),
+            ('component_latent_dim', 64),
+            ('background_latent_dim', 1),
             ('latent_prior', 1.0),
             ('patch_shape', (32, 32)),
             ('image_shape', (128, 128)),
-            ('bg_sigma', 0.001),
-            ('num_blocks', 2),
+            ('bg_sigma', 0.09),
+            ('fg_sigma', 0.11),
+            ('num_blocks', 1),
             ('channel_base', 32),
             ('batch_size', 2),
             ('num_slots', 8),
             ('beta', 1.),
             ('gamma', 1.),
-            ('constrain_theta', True)
+            ('constrain_theta', True),
             ])
 
 
@@ -40,15 +41,15 @@ RunConfiguration = recordtype(
         [
             ('batch_size', 16),
             ('num_epochs', 200),
-            ('vis_every', 50),
+            ('vis_every', 100),
             ('visdom_env', 'default'),
             ('load_parameters', False),
             ('step_size', 1e-4),
             ('reshape', False),
             ('summarize', True),
             ('parallel', True),
-            ('checkpoint_file', '../monet_checkpoints/air_model_constrained.ckpt'),
-            ('data_dir', '../master_thesis_code/src/data/static_gym_no_white/'),
+            ('checkpoint_file', '../monet_checkpoints/air_model_gravitar.ckpt'),
+            ('data_dir', '../master_thesis_code/src/data/static_gym_gravitar/'),
             ])
 
 

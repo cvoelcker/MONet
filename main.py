@@ -16,6 +16,7 @@ import pickle
 import model
 import spatial_monet
 import reimplementation
+import seperate_theta_prediction
 import datasets
 import config
 import experiment_config
@@ -256,15 +257,12 @@ def reimplementation_experiment():
                                               batch_size=run_conf.batch_size,
                                               shuffle=True, num_workers=8)
     if run_conf.parallel:
-        device_id = 0
+        device_id = 3
         torch.cuda.set_device(device_id)
         if run_conf.summarize:
             b_s = model_conf.batch_size
-            # model_conf.batch_size = 2
-            # monet = reimplementation.MaskedAIR(model_conf).cuda()
-            # summary(monet, trainset[0][0].shape)
             model_conf.batch_size = b_s
-        monet = reimplementation.MaskedAIR(model_conf).cuda()
+        monet = seperate_theta_prediction.MaskedAIR(model_conf).cuda()
         sum([param.nelement() for param in monet.parameters()])
         monet = nn.DataParallel(monet, device_ids=[device_id])
     run_training(monet, run_conf, trainloader)

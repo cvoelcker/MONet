@@ -16,7 +16,10 @@ config_options = [
     'channel_base',  # Number of channels used for the first U-Net conv layer
     'bg_sigma',  # Sigma of the decoder distributions for the first slot
     'fg_sigma',  # Sigma of the decoder distributions for all other slots
-    'reshape',
+    'reshape', # flag to reshape the input picture to a specific size
+    'latent_dim', # enables setting the size of the spatial transform glimpse
+    'z_dim', # the size of the latent embedding in the VAE component
+    'bg_dim', # dimensionality of the background encoder
 ]
 
 MonetConfig = namedtuple('MonetConfig', config_options)
@@ -51,16 +54,34 @@ clevr_config = MonetConfig(vis_every=50,
                           )
 
 atari_config = MonetConfig(vis_every=50,
-                           batch_size=8,
+                           batch_size=16,
                            num_epochs=20,
                            load_parameters=False,
                            checkpoint_file='../monet_checkpoints/atari_tiny_net.ckpt',
                            data_dir='../master_thesis_code/src/data/static_gym/',
-                           parallel=True,
-                           num_slots=14,
-                           num_blocks=3,
+                           parallel=False,
+                           num_slots=15,
+                           num_blocks=1,
                            channel_base=32,
                            bg_sigma=0.09,
                            fg_sigma=0.11,
                            reshape=True,
+                          )
+
+spatial_transform_config = MonetConfig(vis_every=2,
+                           batch_size=16,
+                           num_epochs=2000,
+                           load_parameters=False,
+                           checkpoint_file='../monet_checkpoints/atari_overfitting_check.ckpt',
+                           data_dir='../master_thesis_code/src/data/static_gym/',
+                           parallel=True,
+                           num_slots=2,
+                           num_blocks=1,
+                           channel_base=16,
+                           bg_sigma=1.,
+                           fg_sigma=1.,
+                           reshape=False,
+                           latent_dim=(32,32),
+                           z_dim=32,
+                           bg_dim=128,
                           )

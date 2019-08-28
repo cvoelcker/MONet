@@ -7,31 +7,31 @@ parser = argparse.ArgumentParser(description='Generate a runtime configuration f
 parser.add_argument('--load_params', action='store_true')
 parser.add_argument('--load_location', default='../monet_checkpoints/air_model_test.ckpt')
 parser.add_argument('--constrain_theta', action='store_true')
-parser.add_argument('--batch_size', type=int, default=2)
-parser.add_argument('--epochs', type=int, default=20)
+parser.add_argument('--batch_size', type=int, default=8)
+parser.add_argument('--epochs', type=int, default=50)
 parser.add_argument('--num_slots', type=int, default=8)
 parser.add_argument('--step_size', type=float, default=1e-4)
-parser.add_argument('--visdom_env', default='default')
-parser.add_argument('--beta', type=float, default=0.5)
-parser.add_argument('--gamma', type=float, default=100000.)
+parser.add_argument('--visdom_env', default='clippingandregularized')
+parser.add_argument('--beta', type=float, default=1.0)
+parser.add_argument('--gamma', type=float, default=1.0)
 
 
 MaskedAIRModelConfiguration = recordtype(
         'MaskedAIRModelConfiguration', 
         [
-            ('component_latent_dim', 64),
+            ('component_latent_dim', 32),
             ('background_latent_dim', 1),
             ('latent_prior', 1.0),
             ('patch_shape', (32, 32)),
-            ('image_shape', (128, 128)),
-            ('bg_sigma', 0.09),
-            ('fg_sigma', 0.11),
-            ('num_blocks', 1),
+            ('image_shape', (256, 256)),
+            ('bg_sigma', 0.05),
+            ('fg_sigma', 0.1),
+            ('num_blocks', 3),
             ('channel_base', 32),
-            ('batch_size', 2),
+            ('batch_size', 8),
             ('num_slots', 8),
-            ('beta', 1.),
-            ('gamma', 1.),
+            ('beta', 0.1),
+            ('gamma', 0.1),
             ('constrain_theta', True),
             ])
 
@@ -39,17 +39,17 @@ MaskedAIRModelConfiguration = recordtype(
 RunConfiguration = recordtype(
         'RunConfiguration',
         [
-            ('batch_size', 16),
-            ('num_epochs', 200),
-            ('vis_every', 100),
+            ('batch_size', 8),
+            ('num_epochs', 50),
+            ('vis_every', 50),
             ('visdom_env', 'default'),
             ('load_parameters', False),
-            ('step_size', 1e-4),
+            ('step_size', 7e-4),
             ('reshape', False),
-            ('summarize', True),
+            ('summarize', False),
             ('parallel', True),
             ('checkpoint_file', '../monet_checkpoints/air_model_gravitar.ckpt'),
-            ('data_dir', '../master_thesis_code/src/data/static_gym_gravitar/'),
+            ('data_dir', '../master_thesis_code/src/data/demon_attack/static_gym_no_white'),
             ])
 
 

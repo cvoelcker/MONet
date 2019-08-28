@@ -15,11 +15,10 @@ import pickle
 
 import model
 import spatial_monet
-import reimplementation
-import seperate_theta_prediction
 import datasets
 import config
 import experiment_config
+from handlers import TensorboardHandler
 
 
 def numpify(tensor):
@@ -31,33 +30,49 @@ def visualize_masks(imgs, masks, recons, vis):
     colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255), (255, 0, 255), (255, 255, 0)]
     colors.extend([(c[0]//2, c[1]//2, c[2]//2) for c in colors])
     colors.extend([(c[0]//4, c[1]//4, c[2]//4) for c in colors])
+    colors.extend([(c[0]//8, c[1]//8, c[2]//8) for c in colors])
 
     masks = np.argmax(masks, 1)
-    seg_maps = [np.zeros_like(imgs) for m in range(np.max(masks + 1))]
+    seg_maps = np.zeros_like(imgs)
     for i in range(imgs.shape[0]):
         for y in range(imgs.shape[2]):
             for x in range(imgs.shape[3]):
-                seg_maps[masks[i, y, x]][i, :, y, x] = colors[masks[i, y, x]]
-    seq_maps = np.concatenate(seg_maps, 0)
-    seq_maps /= 255.0
-    vis.images(np.concatenate((imgs, seq_maps, recons), 0), nrow=imgs.shape[0])
+                seg_maps[i, :, y, x] = colors[masks[i, y, x]]
+    seg_maps /= 255.0
+    vis.images(np.concatenate((imgs, seg_maps, recons), 0), nrow=imgs.shape[0])
 
 
 def run_training(monet, conf, trainloader):
     vis = visdom.Visdom(env = conf.visdom_env, port=8456)
     if conf.load_parameters and os.path.isfile(conf.checkpoint_file):
+        # monet = torch.load('the_whole_fucking_thing')
         monet.load_state_dict(torch.load(conf.checkpoint_file))
         print('Restored parameters from', conf.checkpoint_file)
     else:
         for w in monet.parameters():
             std_init = 0.01
             nn.init.normal_(w, mean=0., std=std_init)
+        monet.module.init_background_weights(trainloader)
         print('Initialized parameters')
 
-    optimizer = optim.RMSprop(monet.parameters(), lr=1e-4)
+    tbhandler = TensorboardHandler('logs/', conf.visdom_env)
+    optimizer = optim.RMSprop(monet.parameters(), lr=conf.step_size)
+    # optimizer = optim.Adam(monet.parameters(), lr=conf.step_size)
     all_gradients = []
-    for epoch in range(conf.num_epochs):
+
+    beta_max = monet.module.beta
+    gamma_max = monet.module.gamma
+    beta_increase = beta_max / (conf.num_epochs - 10)
+    gamma_increase = gamma_max / (conf.num_epochs - 10)
+
+    monet.module.beta = 0.0
+    monet.module.gamma = 0.0
+
+    for epoch in tqdm.tqdm(list(range(conf.num_epochs))):
         running_loss = 0.0
+        mask_loss = 0.0
+        recon_loss = 0.0
+        kl_loss = 0.0
         epoch_loss = []
         epoch_reconstruction_loss = []
         for i, data in enumerate(tqdm.tqdm(trainloader), 0):
@@ -68,12 +83,20 @@ def run_training(monet, conf, trainloader):
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])
-            # print(torch.mean(loss))
             loss.backward()
+            # param_norm = 0
+            # for p in monet.parameters():
+            #     param_norm += p.grad.data.norm(2).item() ** 2
+            # print(param_norm)
+            torch.nn.utils.clip_grad_norm_(monet.parameters(), 10)
             optimizer.step()
-            running_loss += loss.item()
-            epoch_loss.append(loss.item())
-            epoch_reconstruction_loss.append(torch.mean(output['reconstruction_loss']).item())
+            running_loss += loss.detach().item()
+            mask_loss += output['mask_loss'].mean().detach().item()
+            kl_loss += output['kl_loss'].mean().detach().item()
+            recon_loss += output['reconstruction_loss'].mean().detach().item()
+
+            epoch_loss.append(loss.detach().item())
+            epoch_reconstruction_loss.append(torch.mean(output['reconstruction_loss']).detach().item())
 
             if i % conf.vis_every == conf.vis_every-1:
                 gradients = [(n, p.grad) for n, p in monet.named_parameters()]
@@ -81,18 +104,30 @@ def run_training(monet, conf, trainloader):
                 all_gradients.append(gradients)
                 # print('[%d, %5d] loss: %.3f' %
                 #       (epoch + 1, i + 1, running_loss / conf.vis_every))
-                running_loss = 0.0
                 visualize_masks(numpify(images[:8]),
                                 numpify(output['masks'][:8]),
                                 numpify(output['reconstructions'][:8]), 
                                 vis)
+                handler_data = {'tf_logging': {
+                        'loss': running_loss/conf.vis_every,
+                        'kl_loss': kl_loss/conf.vis_every,
+                        'px_loss': recon_loss/conf.vis_every,
+                        'mask_loss': mask_loss/conf.vis_every},
+                        'step': conf.vis_every,
+                        }
+                tbhandler.run(monet, handler_data)
+                running_loss = 0.0
+                mask_loss = 0.0
+                recon_loss = 0.0
+                kl_loss = 0.0
         torch.save(monet.state_dict(), conf.checkpoint_file)
-        print(np.mean(epoch_loss))
-        print(-1 * np.mean(epoch_reconstruction_loss))
-        pickle.dump(all_gradients, open('gradients.save', 'wb'))
-
+        # pickle.dump(all_gradients, open('gradients.save', 'wb'))
+        if epoch > -1:
+            monet.module.beta += beta_increase
+            monet.module.gamma += gamma_increase
 
     print('training done')
+    torch.save(monet, 'the_whole_fucking_thing')
 
 def sprite_experiment():
     conf = config.sprite_config
@@ -231,7 +266,7 @@ def spatial_transform_experiment():
         # print(conf.batch_size)
         # print(trainset[0][0].shape)
         summary(monet, trainset[0][0].shape, device="cpu")
-        #monet = nn.DataParallel(monet, device_ids=[0])
+        # monet = nn.DataParallel(monet, device_ids=[0])
     run_training(monet, conf, trainloader)
 
 
@@ -257,12 +292,13 @@ def reimplementation_experiment():
                                               batch_size=run_conf.batch_size,
                                               shuffle=True, num_workers=8)
     if run_conf.parallel:
-        device_id = 3
+        pickle.dump(conf, open('model_conf', 'wb'))
+        device_id = 0
         torch.cuda.set_device(device_id)
         if run_conf.summarize:
             b_s = model_conf.batch_size
             model_conf.batch_size = b_s
-        monet = seperate_theta_prediction.MaskedAIR(model_conf).cuda()
+        monet = spatial_monet.MaskedAIR(model_conf).cuda()
         sum([param.nelement() for param in monet.parameters()])
         monet = nn.DataParallel(monet, device_ids=[device_id])
     run_training(monet, run_conf, trainloader)

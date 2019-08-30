@@ -56,17 +56,21 @@ def run_training(monet, conf, trainloader):
         print('Initialized parameters')
 
     tbhandler = TensorboardHandler('logs/', conf.visdom_env)
-    optimizer = optim.RMSprop(monet.parameters(), lr=conf.step_size)
-    # optimizer = optim.Adam(monet.parameters(), lr=conf.step_size)
+    # optimizer = optim.RMSprop(monet.parameters(), lr=conf.step_size)
+    optimizer = optim.Adam(monet.parameters(), lr=conf.step_size)
     all_gradients = []
 
     beta_max = monet.module.beta
     gamma_max = monet.module.gamma
-    beta_increase = beta_max / (conf.num_epochs - 10)
-    gamma_increase = gamma_max / (conf.num_epochs - 10)
+    gamma_increase = gamma_max
 
-    monet.module.beta = 0.0
-    monet.module.gamma = 0.0
+    sigmoid = lambda x: 1/(1+np.exp(-x))
+
+    monet.module.beta = sigmoid(0 - 10)
+    monet.module.gamma = gamma_increase
+
+    print(monet.module.beta)
+    torch.autograd.set_detect_anomaly(False)
 
     for epoch in tqdm.tqdm(list(range(conf.num_epochs))):
         running_loss = 0.0
@@ -84,11 +88,22 @@ def run_training(monet, conf, trainloader):
             output = monet(images)
             loss = torch.mean(output['loss'])
             loss.backward()
-            # param_norm = 0
-            # for p in monet.parameters():
-            #     param_norm += p.grad.data.norm(2).item() ** 2
-            # print(param_norm)
-            torch.nn.utils.clip_grad_norm_(monet.parameters(), 10)
+            # all_norms = []
+            # for n, p in monet.named_parameters():
+            #     if not np.all(np.isfinite(p.data.detach().cpu().numpy())):
+            #         print(n)
+            #         exit()
+            #     all_norms.append((n, p.grad.data.clone().norm().item(), p.data.cpu().clone().numpy()))
+            norm = torch.nn.utils.clip_grad_norm_(monet.parameters(), 10)
+            # if not np.isfinite(norm):
+            #     for pair in all_norms:
+            #         print(pair)
+            #     for n, p in monet.named_parameters():
+            #         print()
+            #         print(n)
+            #         print(p.grad.data.norm())
+
+            assert np.isfinite(norm), f'norm nan {loss}'
             optimizer.step()
             running_loss += loss.detach().item()
             mask_loss += output['mask_loss'].mean().detach().item()
@@ -121,10 +136,10 @@ def run_training(monet, conf, trainloader):
                 recon_loss = 0.0
                 kl_loss = 0.0
         torch.save(monet.state_dict(), conf.checkpoint_file)
+        monet.module.beta = sigmoid(0 - 10 + epoch * 20 /(conf.num_epochs))
         # pickle.dump(all_gradients, open('gradients.save', 'wb'))
-        if epoch > -1:
-            monet.module.beta += beta_increase
-            monet.module.gamma += gamma_increase
+        # monet.module.beta += beta_increase
+        # monet.module.gamma += gamma_increase
 
     print('training done')
     torch.save(monet, 'the_whole_fucking_thing')

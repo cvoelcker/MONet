@@ -38,10 +38,16 @@ def differentiable_sampling(mean, sigma, prior_sigma):
 def reconstruction_likelihood(x, recon, mask, sigma, i=None):
     dist = dists.Normal(x, sigma)
     p_x = dist.log_prob(recon) * mask
+    # if torch.any(torch.isnan(p_x)):
+    #     pickle.dump(x, open('x.save', 'wb'))
+    #     pickle.dump(recon, open('recon.save', 'wb'))
+    #     pickle.dump(mask, open('mask.save', 'wb'))
+    #     pickle.dump(sigma, open('sigma.save', 'wb'))
+    #     assert False, 'Found nan p(x)'
     return p_x
 
 
-def kl_mask(mask, mask_pred):
+def kl_mask(mask_pred, mask):
     tr_masks = mask.view(mask.size()[0], -1)
     tr_mask_preds = mask_pred.view(mask_pred.size()[0], -1)
     
@@ -214,12 +220,16 @@ class SpatialLocalizationNet(nn.Module):
 
     def forward(self, x):
         inp = torch.cat([x, self.coord_map_const], 1)
+        # assert not torch.any(torch.isnan(inp)), 'theta nan inp'
         conv = self.detection_network(inp)
         conv = conv.view(-1, self.conv_size)
+        # assert not torch.any(torch.isnan(conv)), 'theta nan conv'
         theta = self.theta_regression(conv)
         theta = theta.view(-1, self.num_slots, 2, 3)
+        # assert not torch.any(torch.isnan(theta)), 'theta nan theta'
         if self.constrain_theta:
             theta = (theta * self.constrain_mult) + self.constrain_add
+        # assert not torch.any(torch.isnan(theta)), 'theta nan constrained'
         return theta
 
 
@@ -264,28 +274,37 @@ class SpatialAutoEncoder(nn.Module):
         # calculate spatial position for object from joint mask
         # and image
         grid = F.affine_grid(theta, torch.Size((x.size()[0], 1, *self.patch_shape)))
+        # assert not torch.any(torch.isnan(theta)), 'theta nan'
+        # assert not torch.any(torch.isnan(grid)), 'grid nan'
 
         # get patch from theta and grid
         x_patch = transform(x, grid, theta)
+        # assert not torch.any(torch.isnan(x_patch)), 'x_patch nan'
         
         # generate object mask for patch
         mask = self.mask_network(x_patch)
+        # assert not torch.any(torch.isnan(mask)), 'mask nan'
+
 
         # concatenate x and new mask
         encoder_input = torch.cat([x_patch, mask.detach()], 1)
+        # assert not torch.any(torch.isnan(encoder_input)), 'enc_input nan'
 
         # generate latent embedding of the patch
         mean, sigma = self.encoding_network(encoder_input)
         z, kl_z = differentiable_sampling(mean, sigma, self.prior)
+        # assert not torch.any(torch.isnan(z)), 'z nan'
 
         decoded = self.decoding_network(z)
+        # assert not torch.any(torch.isnan(decoded)), 'decoded nan'
         
         # seperate patch into img and scope
         patch_reconstruction = decoded[:, :3, :, :]
         mask_pred = decoded[:, 3:, :, :]
         
         # calculate mask prediction error
-        kl_mask_pred = kl_mask(mask.detach(), mask_pred)
+        kl_mask_pred = kl_mask(torch.clamp(mask_pred, -9, 9), torch.clamp(mask.detach(), 0.0001, 0.9999))
+        # assert not torch.any(torch.isnan(kl_mask_pred)), mask_pred
 
         # transform all components into original space
         x_reconstruction = invert(patch_reconstruction, theta, self.image_shape)
@@ -299,6 +318,8 @@ class SpatialAutoEncoder(nn.Module):
                 mask,
                 self.fg_sigma)
         scope = scope - mask
+        ##  assert not torch.any(torch.isnan(x_reconstruction)), 'x recon nan'
+        ##  assert not torch.any(torch.isnan(mask)), 'mask transform nan'
 
         return x_reconstruction, mask, scope, z, kl_z, p_x, kl_mask_pred
 
@@ -432,10 +453,14 @@ class MaskedAIR(nn.Module):
         
         background, _ = self.background_model(x, scope)
         background = background[:, :3, :, :]
+        # assert not torch.any(torch.isnan(background)), 'bg nan'
 
         # get all thetas at once
         inp = torch.cat([x, (x-background).detach()], 1)
+        # assert not torch.any(torch.isnan(inp)), 'inp thetas nan'
+
         thetas = self.spatial_localization_net(inp)
+        # assert not torch.any(torch.isnan(thetas)), 'thetas nan'
 
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
@@ -462,10 +487,14 @@ class MaskedAIR(nn.Module):
         p_x_loss += p_x
 
         # calculate the final loss
-        assert not torch.any(torch.isnan(p_x_loss)), 'p_x nan'
-        assert not torch.any(torch.isnan(kl_zs)), 'kl z nan'
-        assert not torch.any(torch.isnan(kl_masks)), 'kl mask nan'
+        # assert not torch.any(torch.isnan(p_x_loss)), 'p_x nan'
+        # assert not torch.any(torch.isnan(kl_zs)), 'kl z nan'
+        # assert not torch.any(torch.isnan(kl_masks)), 'kl mask nan'
+        # assert torch.all(torch.isfinite(p_x_loss)), 'p_x infinite'
+        # assert torch.all(torch.isfinite(kl_zs)), 'kl z infinite'
+        # assert torch.all(torch.isfinite(kl_masks)), 'kl mask infinite'
         loss = -p_x_loss.mean([1,2,3]) + self.beta * kl_zs + self.gamma * kl_masks
+        # assert not torch.any(torch.isnan(loss)), f'loss nan with px {p_x_loss.mean([1,2,3])} klz {self.beta * kl_zs} klmask {self.gamma * kl_masks}'
 
         # torchify all outputs
         masks.insert(0, scope)

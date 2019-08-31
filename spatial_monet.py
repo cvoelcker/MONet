@@ -209,7 +209,7 @@ class SpatialLocalizationNet(nn.Module):
                 )
         
         # coordinate patching trick
-        coord_map = create_coord_buffer(self.image_shape).repeat(self.batch_size,1,1,1)
+        coord_map = create_coord_buffer(self.image_shape)
         self.register_buffer('coord_map_const', coord_map)
         
         constrain_add = torch.tensor([[[self.min, 0., -1], [0., self.min, -1]]])
@@ -221,7 +221,7 @@ class SpatialLocalizationNet(nn.Module):
         return F.mse_loss(theta * self.theta_mask, self.theta_mean)
 
     def forward(self, x):
-        inp = torch.cat([x, self.coord_map_const], 1)
+        inp = torch.cat([x, self.coord_map_const.repeat(x.shape[0],1,1,1)], 1)
         conv = self.detection_network(inp)
         conv = conv.view(-1, self.conv_size)
         theta = self.theta_regression(conv)

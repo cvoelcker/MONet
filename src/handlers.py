@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import os, shutil
 
-from src.util.tf_logger import Logger
+from util.tf_logger import Logger
 
 
 class Handler(ABC):

@@ -137,9 +137,6 @@ def run_training(monet, conf, trainloader):
                 kl_loss = 0.0
         torch.save(monet.state_dict(), conf.checkpoint_file)
         monet.module.beta = sigmoid(0 - 10 + epoch * 20 /(conf.num_epochs))
-        # pickle.dump(all_gradients, open('gradients.save', 'wb'))
-        # monet.module.beta += beta_increase
-        # monet.module.gamma += gamma_increase
 
     print('training done')
     torch.save(monet, 'the_whole_fucking_thing')
@@ -307,7 +304,6 @@ def reimplementation_experiment():
                                               batch_size=run_conf.batch_size,
                                               shuffle=True, num_workers=8)
     if run_conf.parallel:
-        pickle.dump(conf, open('model_conf', 'wb'))
         device_id = 0
         torch.cuda.set_device(device_id)
         if run_conf.summarize:

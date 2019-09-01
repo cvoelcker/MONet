@@ -13,12 +13,13 @@ from datetime import datetime
 import tqdm
 import pickle
 
-import model
-import spatial_monet
-import datasets
-import config
-import experiment_config
-from handlers import TensorboardHandler
+import spatial_monet.model as model
+import spatial_monet.datasets as datasets
+import spatial_monet.config as config
+import spatial_monet.experiment_config as experiment_config
+from spatial_monet.handlers import TensorboardHandler
+
+import spatial_monet.spatial_monet as spatial_monet
 
 
 def numpify(tensor):

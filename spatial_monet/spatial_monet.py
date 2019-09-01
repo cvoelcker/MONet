@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dists
 
-from model import UNet
+from spatial_monet.model import UNet
 
 
 def create_coord_buffer(patch_shape):

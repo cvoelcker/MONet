@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import os, shutil
 
-from util.tf_logger import Logger
+from spatial_monet.util.tf_logger import Logger
 
 
 class Handler(ABC):

@@ -17,6 +17,8 @@ The main.py file contains the setup to run and train the model. It imports a dat
 * --gamma: float, weighing factor for the mask reconstruction loss term
 
 
-Running the model requires setting the location of the Atari game frames in the settings, or extending the dataset class to deal with other types of images.
+Running the model requires setting the location of the Atari game frames in the settings, or extending the dataset class to deal with other types of images. It expects standard Atari game frames which are not preprocessed in any way.
 
-It is also possible to run the training via the run_with_config.sh shell script. This creates a save file of the current model source and config to save the model during development and not loose progress.
+It is also possible to run the training via the run_with_config.sh shell script. This creates a save file of the current model source and config to save the model during development and not loose progress. This version does not yet handle command line parameters gracefully, so the experiment_config.py file needs to be changed to change the parameters.
+
+The model can also be installed with the setup.py script for easy integration into other projects.

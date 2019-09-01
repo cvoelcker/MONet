@@ -88,22 +88,7 @@ def run_training(monet, conf, trainloader):
             output = monet(images)
             loss = torch.mean(output['loss'])
             loss.backward()
-            # all_norms = []
-            # for n, p in monet.named_parameters():
-            #     if not np.all(np.isfinite(p.data.detach().cpu().numpy())):
-            #         print(n)
-            #         exit()
-            #     all_norms.append((n, p.grad.data.clone().norm().item(), p.data.cpu().clone().numpy()))
             norm = torch.nn.utils.clip_grad_norm_(monet.parameters(), 10)
-            # if not np.isfinite(norm):
-            #     for pair in all_norms:
-            #         print(pair)
-            #     for n, p in monet.named_parameters():
-            #         print()
-            #         print(n)
-            #         print(p.grad.data.norm())
-
-            assert np.isfinite(norm), f'norm nan {loss}'
             optimizer.step()
             running_loss += loss.detach().item()
             mask_loss += output['mask_loss'].mean().detach().item()
@@ -136,10 +121,9 @@ def run_training(monet, conf, trainloader):
                 recon_loss = 0.0
                 kl_loss = 0.0
         torch.save(monet.state_dict(), conf.checkpoint_file)
-        monet.module.beta = sigmoid(0 - 10 + epoch * 20 /(conf.num_epochs))
+        monet.module.beta = 2 * sigmoid(0 - 10 + epoch * 10 /(conf.num_epochs))
 
     print('training done')
-    torch.save(monet, 'the_whole_fucking_thing')
 
 def sprite_experiment():
     conf = config.sprite_config

@@ -277,7 +277,7 @@ class SpatialAutoEncoder(nn.Module):
         mask = invert(mask, theta, self.image_shape)
 
         # calculate mask prediction error
-        kl_mask_pred = kl_mask(torch.clamp(mask_pred, -9, 9), torch.clamp(mask.detach(), 0.0001, 0.9999))
+        kl_mask_pred = kl_mask(torch.clamp(mask_pred, -9, 9), torch.clamp(mask, 0.0001, 0.9999))
 
         # calculate reconstruction error
         scope = x[:, 6:, :, :]

@@ -7,6 +7,6 @@ setup(name='Spatial MONet',
       description='Implementation of MONet with spatial transformers',
       author='Claas Voelcker',
       author_email='claas@voelcker.net',
-      py_modules=['spatial_monet', 'model'],
+      py_modules=['spatial_monet', 'model', 'experiment_config'],
       install_requires=['numpy', 'torch', 'torchvision']
      )

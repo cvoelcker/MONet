@@ -435,6 +435,9 @@ class MaskedAIR(nn.Module):
 
         self.running = 0
 
+        self.graph_depth = conf.component_latent_dim + 2
+        self.graph_size = (conf.num_slots, conf.num_slots)
+
     def init_background_weights(self, images):
         self.background_model.init_bias(images)
     

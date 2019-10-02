@@ -10,7 +10,7 @@ parser.add_argument('--constrain_theta', action='store_true')
 parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--epochs', type=int, default=50)
 parser.add_argument('--num_slots', type=int, default=8)
-parser.add_argument('--step_size', type=float, default=7e-4)
+parser.add_argument('--step_size', type=float, default=1e-4)
 parser.add_argument('--visdom_env', default='clippingandregularized')
 parser.add_argument('--beta', type=float, default=0.1)
 parser.add_argument('--gamma', type=float, default=1.0)
@@ -19,7 +19,7 @@ parser.add_argument('--gamma', type=float, default=1.0)
 MaskedAIRModelConfiguration = recordtype(
         'MaskedAIRModelConfiguration', 
         [
-            ('component_latent_dim', 32),
+            ('component_latent_dim', 8),
             ('background_latent_dim', 1),
             ('latent_prior', 1.0),
             ('patch_shape', (32, 32)),
@@ -28,7 +28,6 @@ MaskedAIRModelConfiguration = recordtype(
             ('fg_sigma', 0.05),
             ('num_blocks', 2),
             ('channel_base', 8),
-            ('batch_size', 8),
             ('num_slots', 8),
             ('beta', 1.0),
             ('gamma', 1.0),
@@ -78,7 +77,6 @@ def parse_args_to_config(args):
     run_conf.load_parameters = args.load_params
     run_conf.checkpoint_file = args.load_location
 
-    model_conf.batch_size = args.batch_size
     model_conf.num_slots = args.num_slots
     model_conf.constrain_theta = args.constrain_theta
     model_conf.beta = args.beta

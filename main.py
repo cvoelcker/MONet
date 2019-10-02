@@ -13,34 +13,14 @@ from datetime import datetime
 import tqdm
 import pickle
 
-import spatial_monet.model as model
+import spatial_monet.monet as model
 import spatial_monet.datasets as datasets
-import spatial_monet.config as config
-import spatial_monet.experiment_config as experiment_config
+import spatial_monet.util.experiment_config as experiment_config
+
 from spatial_monet.handlers import TensorboardHandler
+from spatial_monet.util.train_util import save_results_after_training, numpify, visualize_masks
 
 import spatial_monet.spatial_monet as spatial_monet
-
-
-def numpify(tensor):
-    return tensor.cpu().detach().numpy()
-
-def visualize_masks(imgs, masks, recons, vis):
-    # print('recons min/max', recons.min().item(), recons.max().item())
-    recons = np.clip(recons, 0., 1.)
-    colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255), (255, 0, 255), (255, 255, 0)]
-    colors.extend([(c[0]//2, c[1]//2, c[2]//2) for c in colors])
-    colors.extend([(c[0]//4, c[1]//4, c[2]//4) for c in colors])
-    colors.extend([(c[0]//8, c[1]//8, c[2]//8) for c in colors])
-
-    masks = np.argmax(masks, 1)
-    seg_maps = np.zeros_like(imgs)
-    for i in range(imgs.shape[0]):
-        for y in range(imgs.shape[2]):
-            for x in range(imgs.shape[3]):
-                seg_maps[i, :, y, x] = colors[masks[i, y, x]]
-    seg_maps /= 255.0
-    vis.images(np.concatenate((imgs, seg_maps, recons), 0), nrow=imgs.shape[0])
 
 
 def run_training(monet, conf, trainloader):
@@ -122,152 +102,14 @@ def run_training(monet, conf, trainloader):
                 recon_loss = 0.0
                 kl_loss = 0.0
         torch.save(monet.state_dict(), conf.checkpoint_file)
-        monet.module.beta = 2 * sigmoid(0 - 10 + epoch * 10 /(conf.num_epochs))
+        monet.module.beta = sigmoid(0 - 10 + epoch)
 
     print('training done')
-
-def sprite_experiment():
-    conf = config.sprite_config
-    transform = transforms.Compose([transforms.ToTensor(),
-                                    transforms.Lambda(lambda x: x.float()),
-                                    ])
-    trainset = datasets.Sprites(conf.data_dir, train=True, transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset,
-                                              batch_size=conf.batch_size,
-                                              shuffle=True, num_workers=2)
-    monet = model.Monet(conf, 64, 64).cuda()
-    if conf.parallel:
-        monet = nn.DataParallel(monet)
-    run_training(monet, conf, trainloader)
-
-def clevr_experiment():
-    conf = config.clevr_config
-    # Crop as described in appendix C
-    crop_tf = transforms.Lambda(lambda x: transforms.functional.crop(x, 29, 64, 192, 192))
-    drop_alpha_tf = transforms.Lambda(lambda x: x[:3])
-    transform = transforms.Compose([crop_tf,
-                                    transforms.Resize((128, 128)),
-                                    transforms.ToTensor(),
-                                    drop_alpha_tf,
-                                    transforms.Lambda(lambda x: x.float()),
-                                   ])
-    trainset = datasets.Clevr(conf.data_dir,
-                              transform=transform)
-
-    trainloader = torch.utils.data.DataLoader(trainset,
-                                              batch_size=conf.batch_size,
-                                              shuffle=True, num_workers=8)
-    monet = model.Monet(conf, 128, 128).cuda()
-    if conf.parallel:
-        monet = nn.DataParallel(monet)
-    run_training(monet, conf, trainloader)
-
-def spatial_transform_experiment():
-    conf = config.spatial_transform_config
-    shape = (128,128)
-    transform = transforms.Compose([transforms.Resize(shape),
-                                    transforms.ToTensor(),
-                                    transforms.Lambda(lambda x: x.float()),
-                                   ])
-    if conf.reshape:
-        shape = (128,128)
-        transform = transforms.Compose([transforms.Lambda(lambda x: transforms.functional.crop(x, 16, 0, 170, 160)),
-                                        transforms.Resize(shape),
-                                        transforms.ToTensor(),
-                                        transforms.Lambda(lambda x: x.float()),
-                                       ])
-    trainset = datasets.Atari(conf.data_dir,
-                              transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset,
-                                              batch_size=conf.batch_size,
-                                              shuffle=True, num_workers=8)
-    if conf.parallel:
-        torch.cuda.set_device(1)
-        monet = spatial_monet.Monet(conf, 
-                                    *shape).cuda()
-        # summary(monet, trainset[0][0].shape)
-        monet = nn.DataParallel(monet, device_ids=[1])
-    else:
-        monet = spatial_monet.Monet(conf, 
-                                    *shape)
-        # print(conf.batch_size)
-        # print(trainset[0][0].shape)
-        # summary(monet, trainset[0][0].shape, device="cpu")
-        #monet = nn.DataParallel(monet, device_ids=[0])
-    run_training(monet, conf, trainloader)
+    # save_results_after_training(monet, trainloader, conf.checkpoint_file)
+    print('saved final results')
 
 
-def atari_experiment():
-    conf = config.atari_config
-    shape = (256,128)
-    transform = transforms.Compose([transforms.Resize(shape),
-                                    transforms.ToTensor(),
-                                    transforms.Lambda(lambda x: x.float()),
-                                   ])
-    if conf.reshape:
-        shape = (128,128)
-        transform = transforms.Compose([transforms.Lambda(lambda x: transforms.functional.crop(x, 16, 0, 170, 160)),
-                                        transforms.Resize(shape),
-                                        transforms.ToTensor(),
-                                        transforms.Lambda(lambda x: x.float()),
-                                       ])
-    trainset = datasets.Atari(conf.data_dir,
-                              transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset,
-                                              batch_size=conf.batch_size,
-                                              shuffle=True, num_workers=8)
-    if conf.parallel:
-        torch.cuda.set_device(3)
-        # monet = model.Monet(conf, *shape).cuda()
-        # summary(monet, trainset[0][0].shape)
-        monet = nn.DataParallel(monet, device_ids=[1,2])
-    else:
-        monet = model.Monet(conf, *shape)
-        #summary(monet, trainset[0][0].shape)
-        monet = nn.DataParallel(monet, device_ids=[0])
-
-    run_training(monet, conf, trainloader)
-
-    monet = model.Monet(conf, *shape).cuda()
-    summary(monet, trainset[0][0].shape)
-
-
-def spatial_transform_experiment():
-    conf = config.spatial_transform_config
-    shape = (128,128)
-    transform = transforms.Compose([transforms.Resize(shape),
-                                    transforms.ToTensor(),
-                                    transforms.Lambda(lambda x: x.float()),
-                                   ])
-    if conf.reshape:
-        shape = (128,128)
-        transform = transforms.Compose([transforms.Lambda(lambda x: transforms.functional.crop(x, 16, 0, 170, 160)),
-                                        transforms.Resize(shape),
-                                        transforms.ToTensor(),
-                                        transforms.Lambda(lambda x: x.float()),
-                                       ])
-    trainset = datasets.Atari(conf.data_dir,
-                              transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset,
-                                              batch_size=conf.batch_size,
-                                              shuffle=True, num_workers=8)
-    if conf.parallel:
-        torch.cuda.set_device(0)
-        monet = spatial_monet.Monet(conf, 
-                                    *shape).cuda()
-        # summary(monet, trainset[0][0].shape)
-        monet = nn.DataParallel(monet, device_ids=[1])
-    else:
-        monet = spatial_monet.Monet(conf, 
-                                    *shape)
-        # print(conf.batch_size)
-        # print(trainset[0][0].shape)
-        summary(monet, trainset[0][0].shape, device="cpu")
-        # monet = nn.DataParallel(monet, device_ids=[0])
-    run_training(monet, conf, trainloader)
-
-
-def reimplementation_experiment():
+def masked_air_experiment():
     conf = experiment_config.parse_args_to_config(sys.argv[1:])
     run_conf = conf.run_config
     model_conf = conf.model_config
@@ -301,8 +143,4 @@ def reimplementation_experiment():
 
 
 if __name__ == '__main__':
-    # clevr_experiment()
-    # sprite_experiment()
-    # atari_experiment()
-    # spatial_transform_experiment()
-    reimplementation_experiment()
+    masked_air_experiment()

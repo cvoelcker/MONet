@@ -13,7 +13,7 @@ data = sys.argv[2]
 
 
 def show_tensor(datum):
-    img = np.transpose(datum[0][0].numpy(), (1,2,0))
+    img = np.transpose(datum[0][0].numpy(), (1, 2, 0))
     plt.imshow(img)
     plt.show()
 
@@ -23,11 +23,11 @@ def main():
     monet = spatial_monet.MaskedAIR(conf.model_config).cuda()
     monet = torch.nn.DataParallel(monet, device_ids=[0])
     monet.load_state_dict(torch.load(conf.run_config.checkpoint_file))
-    shape = (128,128)
+    shape = (128, 128)
     transform = transforms.Compose([transforms.Resize(shape),
                                     transforms.ToTensor(),
                                     transforms.Lambda(lambda x: x.float()),
-                                   ])
+                                    ])
     dataframe = Atari(data, transform=transform)
     trainloader = torch.utils.data.DataLoader(dataframe,
                                               batch_size=8)

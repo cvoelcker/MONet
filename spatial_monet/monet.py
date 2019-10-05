@@ -26,6 +26,7 @@ class AttentionNet(nn.Module):
         new_scope = scope * alpha[:, 1:2]
         return mask, new_scope
 
+
 class EncoderNet(nn.Module):
     def __init__(self, width, height):
         super().__init__()
@@ -54,6 +55,7 @@ class EncoderNet(nn.Module):
         x = self.mlp(x)
         return x
 
+
 class DecoderNet(nn.Module):
     def __init__(self, height, width):
         super().__init__()
@@ -77,7 +79,8 @@ class DecoderNet(nn.Module):
         self.register_buffer('coord_map_const', coord_map)
 
     def forward(self, z):
-        z_tiled = z.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, self.height + 8, self.width + 8)
+        z_tiled = z.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, self.height + 8,
+                                                       self.width + 8)
         coord_map = self.coord_map_const.repeat(z.shape[0], 1, 1, 1)
         inp = torch.cat((z_tiled, coord_map), 1)
         result = self.convs(inp)
@@ -97,7 +100,7 @@ class Monet(nn.Module):
     def forward(self, x, pass_latent=False):
         scope = torch.ones_like(x[:, 0:1])
         masks = []
-        for i in range(self.conf.num_slots-1):
+        for i in range(self.conf.num_slots - 1):
             mask, scope = self.attention(x, scope)
             masks.append(mask)
         masks.append(scope)
@@ -146,7 +149,6 @@ class Monet(nn.Module):
                 'masks': masks,
                 'reconstructions': full_reconstruction}
 
-
     def __encoder_step(self, x, mask):
         encoder_input = torch.cat((x, mask), 1)
         q_params = self.encoder(encoder_input)
@@ -169,8 +171,3 @@ class Monet(nn.Module):
         p_x *= mask
         p_x = torch.sum(p_x, [1, 2, 3])
         return p_x, x_recon, mask_pred
-
-
-
-
-

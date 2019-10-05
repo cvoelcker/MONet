@@ -2,10 +2,12 @@ import collections
 from recordtype import recordtype
 import argparse
 
-parser = argparse.ArgumentParser(description='Generate a runtime configuration for experiment.')
+parser = argparse.ArgumentParser(
+    description='Generate a runtime configuration for experiment.')
 
 parser.add_argument('--load_params', action='store_true')
-parser.add_argument('--load_location', default='../monet_checkpoints/air_model_test.ckpt')
+parser.add_argument('--load_location',
+                    default='../monet_checkpoints/air_model_test.ckpt')
 parser.add_argument('--constrain_theta', action='store_true')
 parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--epochs', type=int, default=50)
@@ -16,52 +18,65 @@ parser.add_argument('--beta', type=float, default=0.1)
 parser.add_argument('--gamma', type=float, default=1.0)
 
 
-MaskedAIRModelConfiguration = recordtype(
-        'MaskedAIRModelConfiguration', 
-        [
-            ('component_latent_dim', 8),
-            ('background_latent_dim', 1),
-            ('latent_prior', 1.0),
-            ('patch_shape', (32, 32)),
-            ('image_shape', (256, 256)),
-            ('bg_sigma', 0.01),
-            ('fg_sigma', 0.05),
-            ('num_blocks', 2),
-            ('channel_base', 8),
-            ('num_slots', 8),
-            ('beta', 1.0),
-            ('gamma', 1.0),
-            ('constrain_theta', True),
-            ])
 
+
+
+MaskedAIRModelConfiguration = recordtype(
+    'MaskedAIRModelConfiguration',
+    [
+        ('component_latent_dim', 8),
+        ('background_latent_dim', 1),
+        ('latent_prior', 1.0),
+        ('patch_shape', (32, 32)),
+        ('image_shape', (256, 256)),
+        ('bg_sigma', 0.01),
+        ('fg_sigma', 0.05),
+        ('num_blocks', 2),
+        ('channel_base', 8),
+        ('num_slots', 8),
+        ('beta', 1.0),
+        ('gamma', 1.0),
+        ('constrain_theta', True),
+    ])
 
 RunConfiguration = recordtype(
-        'RunConfiguration',
-        [
-            ('batch_size', 8),
-            ('num_epochs', 50),
-            ('vis_every', 50),
-            ('visdom_env', 'default'),
-            ('load_parameters', False),
-            ('step_size', 7e-4),
-            ('reshape', False),
-            ('summarize', False),
-            ('parallel', True),
-            ('checkpoint_file', '../monet_checkpoints/air_model_gravitar.ckpt'),
-            ('data_dir', '../master_thesis_code/src/data/demon_attack/static_gym_no_white'),
-            ])
-
+    'RunConfiguration',
+    [
+        ('batch_size', 8),
+        ('num_epochs', 50),
+        ('vis_every', 50),
+        ('visdom_env', 'default'),
+        ('load_parameters', False),
+        ('step_size', 7e-4),
+        ('reshape', False),
+        ('summarize', False),
+        ('parallel', True),
+        ('checkpoint_file', '../monet_checkpoints/air_model_gravitar.ckpt'),
+        ('data_dir',
+         '../master_thesis_code/src/data/demon_attack/static_gym_no_white'),
+    ])
 
 ExperimentConfiguration = recordtype(
-        'ExperimentConfiguration',
-        [
-            'run_config',
-            'model_config',
-            ])
+    'ExperimentConfiguration',
+    [
+        'run_config',
+        'model_config',
+    ])
 
+
+def record_type_to_dict(recordtype_instance):
+    """
+    Really dirty hack
+    """
+    fields = [a for a in recordtype_instance._fields]
+    ret_dict = {}
+    for field in fields:
+        ret_dict[field] = getattr(recordtype_instance, field)
+    return ret_dict
 
 masked_air_default_conf = MaskedAIRModelConfiguration()
 run_default_conf = RunConfiguration()
+
 
 def parse_args_to_config(args):
     args = parser.parse_args(args)

@@ -14,16 +14,16 @@ import tqdm
 import pickle
 
 import spatial_monet.monet as model
-import spatial_monet.datasets as datasets
+import spatial_monet.util.datasets as datasets
 import spatial_monet.util.experiment_config as experiment_config
 
-from spatial_monet.handlers import TensorboardHandler
+from spatial_monet.util.handlers import TensorboardHandler
 from spatial_monet.util.train_util import save_results_after_training, numpify, visualize_masks
 
 import spatial_monet.spatial_monet as spatial_monet
 
 
-def run_training(monet, conf, trainloader):
+def run_training(monet, conf, trainloader, parallel=True):
     vis = visdom.Visdom(env = conf.visdom_env, port=8456)
     if conf.load_parameters and os.path.isfile(conf.checkpoint_file):
         # monet = torch.load('the_whole_fucking_thing')
@@ -64,7 +64,8 @@ def run_training(monet, conf, trainloader):
             images, counts = data
             if images.shape[0] < conf.batch_size:
                 continue
-            images = images.cuda()
+            if parallel:
+                images = images.cuda()
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])
@@ -130,16 +131,21 @@ def masked_air_experiment():
     trainloader = torch.utils.data.DataLoader(trainset,
                                               batch_size=run_conf.batch_size,
                                               shuffle=True, num_workers=8)
+    parallel=False
+    model_conf_dict = experiment_config.record_type_to_dict(model_conf)
+    print(model_conf_dict)
+    monet = spatial_monet.MaskedAIR(model_conf_dict)
     if run_conf.parallel:
+        parallel = True
         device_id = 0
         torch.cuda.set_device(device_id)
         if run_conf.summarize:
             b_s = model_conf.batch_size
             model_conf.batch_size = b_s
-        monet = spatial_monet.MaskedAIR(model_conf).cuda()
+        monet = monet.cuda()
         sum([param.nelement() for param in monet.parameters()])
         monet = nn.DataParallel(monet, device_ids=[device_id])
-    run_training(monet, run_conf, trainloader)
+    run_training(monet, run_conf, trainloader, parallel)
 
 
 if __name__ == '__main__':

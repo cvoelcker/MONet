@@ -7,7 +7,9 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('--load_params', action='store_true')
 parser.add_argument('--load_location',
-                    default='../monet_checkpoints/air_model_test.ckpt')
+                    default='test_data')
+parser.add_argument('--data_location',
+                    default='test_data')
 parser.add_argument('--constrain_theta', action='store_true')
 parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--epochs', type=int, default=50)
@@ -16,9 +18,6 @@ parser.add_argument('--step_size', type=float, default=1e-4)
 parser.add_argument('--visdom_env', default='clippingandregularized')
 parser.add_argument('--beta', type=float, default=0.1)
 parser.add_argument('--gamma', type=float, default=1.0)
-
-
-
 
 
 MaskedAIRModelConfiguration = recordtype(
@@ -80,7 +79,6 @@ run_default_conf = RunConfiguration()
 
 def parse_args_to_config(args):
     args = parser.parse_args(args)
-    print(args)
 
     model_conf = masked_air_default_conf
     run_conf = run_default_conf
@@ -91,6 +89,7 @@ def parse_args_to_config(args):
     run_conf.visdom_env = args.visdom_env
     run_conf.load_parameters = args.load_params
     run_conf.checkpoint_file = args.load_location
+    run_conf.data_dir = args.data_location
 
     model_conf.num_slots = args.num_slots
     model_conf.constrain_theta = args.constrain_theta

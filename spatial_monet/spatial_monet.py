@@ -70,7 +70,6 @@ class DecoderNet(nn.Module):
         super().__init__()
 
         self.latent_dim = component_latent_dim
-        print(component_latent_dim)
         self.patch_shape = patch_shape
 
         # gave it inverted hourglass shape
@@ -192,7 +191,6 @@ class MaskNet(nn.Module):
     def __init__(self, in_channels=7, num_blocks=None, channel_base=32,
                  **kwargs):
         super().__init__()
-        print(num_blocks)
         self.unet = net_util.UNet(num_blocks=num_blocks,
                                   in_channels=in_channels,
                                   out_channels=1,
@@ -214,7 +212,6 @@ class SpatialAutoEncoder(nn.Module):
                  image_shape=(256, 256),
                  num_blocks=2, **kwargs):
         super().__init__()
-        print(component_latent_dim)
         self.prior = latent_prior
         self.fg_sigma = fg_sigma
         self.bg_sigma = bg_sigma
@@ -380,15 +377,12 @@ class MaskedAIR(nn.Module):
             self, bg_sigma=0.09, fg_sigma=0.11, latent_prior=1.,
             component_latent_dim=8, patch_shape=(32, 32),
             image_shape=(256, 256), num_blocks=2, num_slots=8,
-            constrain_theta=False, beta=1., gamma=1.):
+            constrain_theta=False, beta=1., gamma=1., **kwargs):
         super().__init__()
-
         self.bg_sigma = bg_sigma
         self.fg_sigma = fg_sigma
         self.latent_prior = latent_prior
         self.component_latent_dim = component_latent_dim
-        self.fg_sigma = fg_sigma
-        self.bg_sigma = bg_sigma
         self.patch_shape = patch_shape
         self.image_shape = image_shape
         self.num_blocks = num_blocks
@@ -467,7 +461,6 @@ class MaskedAIR(nn.Module):
 
         thetas = self.spatial_localization_net(inp)
 
-        print(torch.mean(thetas, 1))
 
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
@@ -487,7 +480,7 @@ class MaskedAIR(nn.Module):
             latents.append(z)
 
         total_reconstruction += background * scope
-
+        
         # calculate reconstruction error
         p_x = net_util.reconstruction_likelihood(x,
                                                  background,

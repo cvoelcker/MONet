@@ -134,7 +134,7 @@ def masked_air_experiment():
     parallel=False
     model_conf_dict = experiment_config.record_type_to_dict(model_conf)
     print(model_conf_dict)
-    monet = spatial_monet.MaskedAIR(model_conf_dict)
+    monet = spatial_monet.MaskedAIR(**model_conf_dict)
     if run_conf.parallel:
         parallel = True
         device_id = 0

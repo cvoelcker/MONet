@@ -4,14 +4,14 @@ import torch.distributions as dists
 
 import torchvision
 
-from spatial_monet.util.network_util import UNet
+import spatial_monet.util.network_util as net_util
 
 
 class AttentionNet(nn.Module):
     def __init__(self, conf):
         super().__init__()
         self.conf = conf
-        self.unet = UNet(num_blocks=conf.num_blocks,
+        self.unet = net_util.UNet(num_blocks=conf.num_blocks,
                          in_channels=4,
                          out_channels=2,
                          channel_base=conf.channel_base)
@@ -148,6 +148,25 @@ class Monet(nn.Module):
         return {'loss': loss,
                 'masks': masks,
                 'reconstructions': full_reconstruction}
+
+    def build_image_graph(self, x):
+        """
+        Builds the graph representation of an image from one forward pass
+        of the model
+        """
+        loss, masks, embeddings = self.forward(x, pass_latent=True).values()
+
+        grid = net_util.center_of_mass(masks[:, 1:])
+        gridX = grid[..., :1] - grid[..., :1].permute(0, 2, 1)
+        gridY = grid[..., 1:] - grid[..., 1:].permute(0, 2, 1)
+        grid = torch.stack([gridX, gridY], -1)
+
+        grid_embeddings = embeddings.unsqueeze(2)
+        grid_interactions = (grid_embeddings - grid_embeddings.permute(0, 2, 1,
+                                                                       3)) / 2
+        grid_embeddings = grid_interactions + grid_embeddings
+
+        return torch.cat([grid_embeddings, grid], -1), loss
 
     def __encoder_step(self, x, mask):
         encoder_input = torch.cat((x, mask), 1)

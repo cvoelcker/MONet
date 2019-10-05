@@ -420,7 +420,7 @@ class MaskedAIR(nn.Module):
         Builds the graph representation of an image from one forward pass
         of the model
         """
-        _, _, _, masks, embeddings, positions, _, _ = self(x).values()
+        loss, _, _, masks, embeddings, positions, _, _ = self.forward(x).values()
 
         explicit_positions = net_util.center_of_mass(masks)
 
@@ -430,10 +430,11 @@ class MaskedAIR(nn.Module):
         grid = torch.stack([gridX, gridY], -1)
 
         grid_embeddings = embeddings.unsqueeze(2)
-        grid_embeddings = (grid_embeddings + grid_embeddings.permute(0, 2, 1,
+        grid_interactions = (grid_embeddings - grid_embeddings.permute(0, 2, 1,
                                                                      3)) / 2
+        grid_embeddings = grid_interactions + grid_embeddings
 
-        return torch.cat([grid_embeddings, grid], -1)
+        return torch.cat([grid_embeddings, grid], -1), loss
 
     def forward(self, x):
         """

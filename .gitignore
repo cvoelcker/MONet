@@ -125,3 +125,6 @@ dmypy.json
 *.zip
 logs/
 test_data/
+
+# IDE files
+.idea/

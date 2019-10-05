@@ -16,7 +16,8 @@ class EncoderNet(nn.Module):
     General parameterized encoding architecture for VAE components
     """
 
-    def __init__(self, component_latent_dim=32, patch_shape=(32, 32), input_size=8,
+    def __init__(self, component_latent_dim=32, patch_shape=(32, 32),
+                 input_size=8,
                  **kwargs):
         super().__init__()
 
@@ -420,9 +421,10 @@ class MaskedAIR(nn.Module):
         Builds the graph representation of an image from one forward pass
         of the model
         """
-        loss, _, _, masks, embeddings, positions, _, _ = self.forward(x).values()
+        loss, _, _, masks, embeddings, positions, _, _ = self.forward(
+            x).values()
 
-        explicit_positions = net_util.center_of_mass(masks)
+        print(embeddings.shape)
 
         grid = net_util.center_of_mass(masks[:, 1:])
         gridX = grid[..., :1] - grid[..., :1].permute(0, 2, 1)
@@ -431,10 +433,14 @@ class MaskedAIR(nn.Module):
 
         grid_embeddings = embeddings.unsqueeze(2)
         grid_interactions = (grid_embeddings - grid_embeddings.permute(0, 2, 1,
-                                                                     3)) / 2
-        grid_embeddings = grid_interactions + grid_embeddings
+                                                                       3)) / 2
+        grid_embeddings = grid_interactions + torch.eye() * grid_embeddings
 
-        return torch.cat([grid_embeddings, grid], -1), loss
+        graph_embedding = torch.cat([grid_embeddings, grid], -1)
+
+        print(graph_embedding)
+
+        return graph_embedding, loss
 
     def forward(self, x):
         """
@@ -462,7 +468,6 @@ class MaskedAIR(nn.Module):
 
         thetas = self.spatial_localization_net(inp)
 
-
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
             theta = thetas[:, i]
@@ -481,7 +486,7 @@ class MaskedAIR(nn.Module):
             latents.append(z)
 
         total_reconstruction += background * scope
-        
+
         # calculate reconstruction error
         p_x = net_util.reconstruction_likelihood(x,
                                                  background,
@@ -507,8 +512,8 @@ class MaskedAIR(nn.Module):
         return {'loss': loss,
                 'reconstructions': total_reconstruction,
                 'reconstruction_loss': p_x_loss,
-                'masks': masks,
-                'latents': latents,
+                'masks': torch.stack(masks, 1),
+                'latents': torch.stack(latents, 1),
                 'theta': thetas,
                 'mask_loss': kl_masks,
                 'kl_loss': kl_zs}

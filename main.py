@@ -66,11 +66,15 @@ def run_training(monet, conf, trainloader, parallel=True):
                 continue
             if parallel:
                 images = images.cuda()
+            graph, l = monet.build_image_graph(images)
+            print(graph)
+            print()
+            print()
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])
             loss.backward()
-            norm = torch.nn.utils.clip_grad_norm_(monet.parameters(), 10)
+            torch.nn.utils.clip_grad_norm_(monet.parameters(), 10)
             optimizer.step()
             running_loss += loss.detach().item()
             mask_loss += output['mask_loss'].mean().detach().item()
@@ -86,10 +90,10 @@ def run_training(monet, conf, trainloader, parallel=True):
                 all_gradients.append(gradients)
                 # print('[%d, %5d] loss: %.3f' %
                 #       (epoch + 1, i + 1, running_loss / conf.vis_every))
-                visualize_masks(numpify(images[:8]),
-                                numpify(output['masks'][:8]),
-                                numpify(output['reconstructions'][:8]), 
-                                vis)
+                # visualize_masks(numpify(images[:8]),
+                #                 numpify(output['masks'][:8]),
+                #                 numpify(output['reconstructions'][:8]),
+                #                 vis)
                 handler_data = {'tf_logging': {
                         'loss': running_loss/conf.vis_every,
                         'kl_loss': kl_loss/conf.vis_every,

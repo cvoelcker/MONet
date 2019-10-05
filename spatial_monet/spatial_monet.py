@@ -424,21 +424,17 @@ class MaskedAIR(nn.Module):
         loss, _, _, masks, embeddings, positions, _, _ = self.forward(
             x).values()
 
-        print(embeddings.shape)
-
         grid = net_util.center_of_mass(masks[:, 1:])
         gridX = grid[..., :1] - grid[..., :1].permute(0, 2, 1)
         gridY = grid[..., 1:] - grid[..., 1:].permute(0, 2, 1)
         grid = torch.stack([gridX, gridY], -1)
 
+        embedding_matrix = torch.diag_embed(embeddings.transpose(-1, -2)).transpose(-1, -3)
+        
         grid_embeddings = embeddings.unsqueeze(2)
-        grid_interactions = (grid_embeddings - grid_embeddings.permute(0, 2, 1,
-                                                                       3)) / 2
-        grid_embeddings = grid_interactions + torch.eye() * grid_embeddings
-
+        grid_interactions = grid_embeddings - grid_embeddings.permute(0, 2, 1, 3)
+        grid_embeddings = grid_interactions + embedding_matrix
         graph_embedding = torch.cat([grid_embeddings, grid], -1)
-
-        print(graph_embedding)
 
         return graph_embedding, loss
 
@@ -512,8 +508,8 @@ class MaskedAIR(nn.Module):
         return {'loss': loss,
                 'reconstructions': total_reconstruction,
                 'reconstruction_loss': p_x_loss,
-                'masks': torch.stack(masks, 1),
-                'latents': torch.stack(latents, 1),
+                'masks': masks,
+                'latents': latents,
                 'theta': thetas,
                 'mask_loss': kl_masks,
                 'kl_loss': kl_zs}

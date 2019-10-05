@@ -66,10 +66,6 @@ def run_training(monet, conf, trainloader, parallel=True):
                 continue
             if parallel:
                 images = images.cuda()
-            graph, l = monet.build_image_graph(images)
-            print(graph)
-            print()
-            print()
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])

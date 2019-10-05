@@ -87,8 +87,9 @@ def transform(x, grid, theta):
 
 
 def center_of_mass(mask, device='cuda'):
-    grids = [torch.Tensor(grid).to(device) for grid in
-             np.ogrid[[slice(0, i) for i in mask.shape[-2:]]]]
+    grids = [torch.Tensor(grid).to(device) for grid in np.ogrid[[slice(0, i) for i in mask.shape[-2:]]]]
+    norm = torch.sum(mask, [-2, -1])
+    return torch.stack([torch.sum(mask * grids[d], [-2, -1]) / norm for d in range(2)], -1) 
 
 
 class UNet(nn.Module):

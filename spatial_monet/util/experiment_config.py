@@ -11,7 +11,7 @@ parser.add_argument('--load_location',
 parser.add_argument('--data_location',
                     default='test_data')
 parser.add_argument('--constrain_theta', action='store_true')
-parser.add_argument('--batch_size', type=int, default=8)
+parser.add_argument('--batch_size', type=int, default=4)
 parser.add_argument('--epochs', type=int, default=50)
 parser.add_argument('--num_slots', type=int, default=8)
 parser.add_argument('--step_size', type=float, default=1e-4)
@@ -23,7 +23,7 @@ parser.add_argument('--gamma', type=float, default=1.0)
 MaskedAIRModelConfiguration = recordtype(
     'MaskedAIRModelConfiguration',
     [
-        ('component_latent_dim', 8),
+        ('component_latent_dim', 16),
         ('background_latent_dim', 1),
         ('latent_prior', 1.0),
         ('patch_shape', (32, 32)),

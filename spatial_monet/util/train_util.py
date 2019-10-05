@@ -60,7 +60,7 @@ def visualize_masks(imgs, masks, recons, vis):
 def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                  batch_size=8, visdom_env='default', vis_every=50,
                  load_parameters='false', checkpoint_file='default',
-                 parallel=True):
+                 parallel=True, **kwargs):
     vis = visdom.Visdom(env=visdom_env, port=8456)
     if load_parameters and os.path.isfile(checkpoint_file):
         # monet = torch.load('the_whole_fucking_thing')
@@ -75,7 +75,7 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
 
     tbhandler = TensorboardHandler('logs/', visdom_env)
     # optimizer = optim.RMSprop(monet.parameters(), lr=conf.step_size)
-    optimizer = torch.optimizer.Adam(monet.parameters(), lr=step_size)
+    optimizer = torch.optim.Adam(monet.parameters(), lr=step_size)
     all_gradients = []
 
     beta_max = monet.module.beta
@@ -90,14 +90,14 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
     print(monet.module.beta)
     torch.autograd.set_detect_anomaly(False)
 
-    for epoch in tqdm.tqdm(list(range(num_epochs))):
+    for epoch in tqdm(list(range(num_epochs))):
         running_loss = 0.0
         mask_loss = 0.0
         recon_loss = 0.0
         kl_loss = 0.0
         epoch_loss = []
         epoch_reconstruction_loss = []
-        for i, data in enumerate(tqdm.tqdm(trainloader), 0):
+        for i, data in enumerate(tqdm(trainloader), 0):
             images, counts = data
             if images.shape[0] < batch_size:
                 continue

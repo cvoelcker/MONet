@@ -425,22 +425,17 @@ class MaskedAIR(nn.Module):
             x).values()
 
         grid = net_util.center_of_mass(masks[:, 1:])
-        grid_x = grid[..., :1] - grid[..., :1].permute(0, 2, 1)
-        grid_y = grid[..., 1:] - grid[..., 1:].permute(0, 2, 1)
-        grid = torch.stack([grid_x, grid_y], -1)
+        embeddings = torch.cat((embeddings, grid, positions), -1)
+        grid_interactions = embeddings - embeddings.transpose(2, 1)
 
         embedding_matrix = torch.diag_embed(
             embeddings.transpose(-1, -2)).transpose(-1, -3)
 
-        grid_embeddings = embeddings.unsqueeze(2)
-        grid_interactions = grid_embeddings - grid_embeddings.permute(0, 2, 1,
-                                                                      3)
         grid_embeddings = grid_interactions + embedding_matrix
-        graph_embedding = torch.cat([grid_embeddings, grid], -1)
 
-        return graph_embedding, loss
+        return grid_embeddings, loss
 
-    def build_image_representation(self, x):
+    def build_flat_image_representation(self, x):
         loss, _, _, masks, embeddings, positions, _, _ = self.forward(
             x).values()
         grid = net_util.center_of_mass(masks[:, 1:])

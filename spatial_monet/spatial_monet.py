@@ -429,7 +429,7 @@ class MaskedAIR(nn.Module):
 
         # grid_embeddings = grid_interactions + embedding_matrix
 
-        return grid_interactions, embedding_matrix, loss
+        return grid_interactions, embeddings, loss
 
     def build_flat_image_representation(self, x):
         loss, _, _, masks, embeddings, positions, _, _ = self.forward(

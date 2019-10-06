@@ -440,6 +440,14 @@ class MaskedAIR(nn.Module):
 
         return graph_embedding, loss
 
+    def build_image_representation(self, x):
+        loss, _, _, masks, embeddings, positions, _, _ = self.forward(
+            x).values()
+        grid = net_util.center_of_mass(masks[:, 1:])
+        print(grid.shape)
+        full = torch.cat(embeddings, positions.view(-1, self.num_slots, 6), grid, 1)
+        return full
+
     def forward(self, x):
         """
         Main model forward pass

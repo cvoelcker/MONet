@@ -64,16 +64,16 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                  beta_overwrite=None, **kwargs):
     print(batch_size)
     # vis = visdom.Visdom(env=visdom_env, port=8456)
-    # if load_parameters and os.path.isfile(checkpoint_file):
-    #     # monet = torch.load('the_whole_fucking_thing')
-    #     monet.load_state_dict(torch.load(checkpoint_file))
-    #     print('Restored parameters from', checkpoint_file)
-    # elif initialize:
-    #     for w in monet.parameters():
-    #         std_init = 0.01
-    #         nn.init.normal_(w, mean=0., std=std_init)
-    #     monet.module.init_background_weights(trainloader)
-    #     print('Initialized parameters')
+    if load_parameters and os.path.isfile(checkpoint_file):
+        # monet = torch.load('the_whole_fucking_thing')
+        monet.load_state_dict(torch.load(checkpoint_file))
+        print('Restored parameters from', checkpoint_file)
+    elif initialize:
+        for w in monet.parameters():
+            std_init = 0.01
+            nn.init.normal_(w, mean=0., std=std_init)
+        monet.module.init_background_weights(trainloader)
+        print('Initialized parameters')
 
     if tbhandler is None:
         tbhandler = TensorboardHandler('logs/', visdom_env)
@@ -108,6 +108,9 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                 continue
             if parallel:
                 images = images.cuda()
+            
+            print(monet.module.build_image_representation(images))
+            print(monet.module.build_image_representation(images).shape)
 
             optimizer.zero_grad()
             output = monet(images)

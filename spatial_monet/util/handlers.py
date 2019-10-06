@@ -24,7 +24,7 @@ class PrintHandler(Handler):
 
 class TensorboardHandler(Handler):
 
-    def __init__(self, logdir='../logs', namedir='default', reset_logdir=True):
+    def __init__(self, logdir='../master_thesis_code/logs', namedir='default', reset_logdir=True):
         full_path = os.path.abspath(logdir) + '/' + namedir
         self.logger = Logger(full_path)
         print(f'Logging to {full_path}')

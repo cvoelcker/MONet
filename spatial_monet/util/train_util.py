@@ -76,7 +76,7 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
         print('Initialized parameters')
 
     if tbhandler is None:
-        tbhandler = TensorboardHandler('logs/', visdom_env)
+        tbhandler = TensorboardHandler('../master_thesis_code/logs/', visdom_env)
     # optimizer = optim.RMSprop(monet.parameters(), lr=conf.step_size)
     optimizer = torch.optim.Adam(monet.parameters(), lr=step_size)
     all_gradients = []
@@ -113,7 +113,7 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
             output = monet(images)
             loss = torch.mean(output['loss'])
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(monet.parameters(), 10)
+            torch.nn.utils.clip_grad_norm_(monet.parameters(), 5)
             optimizer.step()
             running_loss += loss.detach().item()
             mask_loss += output['mask_loss'].mean().detach().item()
@@ -143,7 +143,7 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                     'kl_loss': kl_loss / vis_every,
                     'px_loss': recon_loss / vis_every,
                     'mask_loss': mask_loss / vis_every},
-                    'step': vis_every,
+                    'step': vis_every * batch_size,
                 }
                 tbhandler.run(monet, handler_data)
                 running_loss = 0.0

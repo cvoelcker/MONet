@@ -421,17 +421,20 @@ class MaskedAIR(nn.Module):
         Builds the graph representation of an image from one forward pass
         of the model
         """
-        loss, _, _, masks, embeddings, positions, _, _ = self.forward(
-            x).values()
-
-        grid = net_util.center_of_mass(masks[:, 1:])
-        embeddings = torch.cat((embeddings, grid, positions), -1)
-        grid_interactions = embeddings - embeddings.transpose(2, 1)
-
+        embeddings, loss = self.build_flat_image_representation(x)
         embedding_matrix = torch.diag_embed(
             embeddings.transpose(-1, -2)).transpose(-1, -3)
 
+        embeddings = embeddings.unsqueeze(2)
+        grid_interactions = embeddings - embeddings.permute(0, 2, 1, 3)
+
         grid_embeddings = grid_interactions + embedding_matrix
+        
+        # for i in range(self.num_slots):
+        #     assert torch.allclose(grid_embeddings[:, i, i, :], embeddings[:, i, 0, :]), f'{i}'
+        #     for j in range(self.num_slots):
+        #         if i != j:
+        #             assert torch.allclose(grid_embeddings[:, i, j, :], embeddings[:, i, 0, :] - embeddings[:, j, 0, :]), f'{i}, {j}'
 
         return grid_embeddings, loss
 
@@ -440,7 +443,7 @@ class MaskedAIR(nn.Module):
             x).values()
         grid = net_util.center_of_mass(masks[:, 1:])
         full = torch.cat([embeddings, positions.view(-1, self.num_slots, 6), grid], -1)
-        return full
+        return full, loss
 
     def forward(self, x):
         """

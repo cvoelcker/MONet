@@ -410,7 +410,7 @@ class MaskedAIR(nn.Module):
 
         self.running = 0
 
-        self.graph_depth = component_latent_dim + 2
+        self.graph_depth = component_latent_dim + 8
         self.graph_size = (num_slots, num_slots)
 
     def init_background_weights(self, images):
@@ -422,16 +422,12 @@ class MaskedAIR(nn.Module):
         of the model
         """
         embeddings, loss = self.build_flat_image_representation(x)
-        embedding_matrix = torch.diag_embed(
-            embeddings.transpose(-1, -2)).transpose(-1, -3)
 
-        grid_interactions = embeddings - embeddings.permute(0, 2, 1, 3)
+        embeddings_interaction = embeddings.unsqueeze(2)
+        grid_interactions = embeddings_interaction - \
+            embeddings_interaction.permute(0, 2, 1, 3)
 
-        # for i in range(self.num_slots):
-        #     assert torch.allclose(grid_embeddings[:, i, i, :], embeddings[:, i, 0, :]), f'{i}'
-        #     for j in range(self.num_slots):
-        #         if i != j:
-        #             assert torch.allclose(grid_embeddings[:, i, j, :], embeddings[:, i, 0, :] - embeddings[:, j, 0, :]), f'{i}, {j}'
+        # grid_embeddings = grid_interactions + embedding_matrix
 
         return grid_interactions, embedding_matrix, loss
 
@@ -439,7 +435,8 @@ class MaskedAIR(nn.Module):
         loss, _, _, masks, embeddings, positions, _, _ = self.forward(
             x).values()
         grid = net_util.center_of_mass(masks[:, 1:])
-        full = torch.cat([embeddings, positions.view(-1, self.num_slots, 6), grid], -1)
+        full = torch.cat(
+            [embeddings, positions.view(-1, self.num_slots, 6), grid], -1)
         return full, loss
 
     def forward(self, x):
@@ -455,8 +452,11 @@ class MaskedAIR(nn.Module):
         total_reconstruction = torch.zeros_like(x)
 
         loss = torch.zeros_like(x[:, 0, 0, 0])
-        kl_zs = torch.zeros_like(x[:, 0, :self.component_latent_dim, 0]).squeeze()
-        kl_masks = torch.zeros_like(x[:, 0, :, :]).view(x.shape[0], x.shape[2] * x.shape[3])
+        kl_zs = torch.zeros_like(
+            x[:, 0, :self.component_latent_dim, 0]).squeeze()
+        kl_masks = torch.zeros_like(x[:, 0, :, :]).view(x.shape[0],
+                                                        x.shape[2] * x.shape[
+                                                            3])
         p_x_loss = torch.zeros_like(x)
 
         background, _ = self.background_model(x, scope)
@@ -497,7 +497,8 @@ class MaskedAIR(nn.Module):
 
         # calculate the final loss
         loss = -p_x_loss.sum(
-            [1, 2, 3]) + self.beta * kl_zs.sum([1]) + self.gamma * kl_masks.sum([1])
+            [1, 2, 3]) + self.beta * kl_zs.sum(
+            [1]) + self.gamma * kl_masks.sum([1])
 
         # torchify all outputs
         masks.insert(0, scope)
@@ -508,11 +509,11 @@ class MaskedAIR(nn.Module):
 
         # currently missing is the mask reconstruction loss
         return_dict = {'loss': loss,
-                'reconstructions': total_reconstruction,
-                'reconstruction_loss': p_x_loss,
-                'masks': masks,
-                'latents': latents,
-                'theta': thetas,
-                'mask_loss': kl_masks,
-                'kl_loss': kl_zs}
+                       'reconstructions': total_reconstruction,
+                       'reconstruction_loss': p_x_loss,
+                       'masks': masks,
+                       'latents': latents,
+                       'theta': thetas,
+                       'mask_loss': kl_masks,
+                       'kl_loss': kl_zs}
         return return_dict

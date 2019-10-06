@@ -356,7 +356,7 @@ class FCBackgroundModel(nn.Module):
             norm = len(images.dataset)
             append = torch.zeros((1, self.image_shape[0], self.image_shape[1]))
             for image_batch in images:
-                for image in image_batch[0]:
+                for image in image_batch:
                     fill = torch.cat([image, append], 0).cuda()
                     self.net.weight.data += fill.view(-1, 1)
             self.net.weight.data /= norm
@@ -444,8 +444,7 @@ class MaskedAIR(nn.Module):
         loss, _, _, masks, embeddings, positions, _, _ = self.forward(
             x).values()
         grid = net_util.center_of_mass(masks[:, 1:])
-        print(grid.shape)
-        full = torch.cat(embeddings, positions.view(-1, self.num_slots, 6), grid, 1)
+        full = torch.cat([embeddings, positions.view(-1, self.num_slots, 6), grid], -1)
         return full
 
     def forward(self, x):

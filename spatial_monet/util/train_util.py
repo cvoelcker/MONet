@@ -109,9 +109,6 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
             if parallel:
                 images = images.cuda()
             
-            print(monet.module.build_image_representation(images))
-            print(monet.module.build_image_representation(images).shape)
-
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])

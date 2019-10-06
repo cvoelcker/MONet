@@ -137,7 +137,7 @@ class Atari(Dataset):
         img = Image.fromarray(self.dataset[idx])
         if self.transform is not None:
             img = self.transform(img)
-        return img, 1
+        return img
 
     def get_shape(self):
         return self.dataset[0].shape

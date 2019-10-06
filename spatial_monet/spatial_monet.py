@@ -375,8 +375,8 @@ class MaskedAIR(nn.Module):
     """
 
     def __init__(
-            self, bg_sigma=0.09, fg_sigma=0.11, latent_prior=1.,
-            component_latent_dim=8, patch_shape=(32, 32),
+            self, bg_sigma=0.01, fg_sigma=0.05, latent_prior=1.,
+            component_latent_dim=16, patch_shape=(16, 16),
             image_shape=(256, 256), num_blocks=2, num_slots=8,
             constrain_theta=False, beta=1., gamma=1., **kwargs):
         super().__init__()
@@ -453,8 +453,8 @@ class MaskedAIR(nn.Module):
         total_reconstruction = torch.zeros_like(x)
 
         loss = torch.zeros_like(x[:, 0, 0, 0])
-        kl_zs = torch.zeros_like(loss)
-        kl_masks = torch.zeros_like(loss)
+        kl_zs = torch.zeros_like(x[:, 0, :self.component_latent_dim, 0]).squeeze()
+        kl_masks = torch.zeros_like(x[:, 0, :, :]).view(x.shape[0], x.shape[2] * x.shape[3])
         p_x_loss = torch.zeros_like(x)
 
         background, _ = self.background_model(x, scope)
@@ -483,7 +483,6 @@ class MaskedAIR(nn.Module):
             latents.append(z)
 
         total_reconstruction += background * scope
-
         # calculate reconstruction error
         p_x = net_util.reconstruction_likelihood(x,
                                                  background,
@@ -495,8 +494,8 @@ class MaskedAIR(nn.Module):
         p_x_loss += p_x
 
         # calculate the final loss
-        loss = -p_x_loss.mean(
-            [1, 2, 3]) + self.beta * kl_zs + self.gamma * kl_masks
+        loss = -p_x_loss.sum(
+            [1, 2, 3]) + self.beta * kl_zs.sum([1]) + self.gamma * kl_masks.sum([1])
 
         # torchify all outputs
         masks.insert(0, scope)
@@ -506,7 +505,7 @@ class MaskedAIR(nn.Module):
         self.running += 1
 
         # currently missing is the mask reconstruction loss
-        return {'loss': loss,
+        return_dict = {'loss': loss,
                 'reconstructions': total_reconstruction,
                 'reconstruction_loss': p_x_loss,
                 'masks': masks,
@@ -514,3 +513,4 @@ class MaskedAIR(nn.Module):
                 'theta': thetas,
                 'mask_loss': kl_masks,
                 'kl_loss': kl_zs}
+        return return_dict

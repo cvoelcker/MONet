@@ -45,17 +45,11 @@ def invert(x, theta, image_shape, padding='zeros'):
     return x
 
 
-def differentiable_sampling(mean, sigma, prior_sigma, reducer='mean'):
+def differentiable_sampling(mean, sigma, prior_sigma):
     dist = dists.Normal(mean, sigma)
     dist_0 = dists.Normal(0., prior_sigma)
     z = mean + sigma * dist_0.sample()
     kl_z = dists.kl_divergence(dist, dist_0)
-    if reducer == 'mean':
-        kl_z = torch.mean(kl_z, [1])
-    elif reducer == 'sum':
-        kl_z = torch.sum(kl_z, [1])
-    else:
-        raise NotImplementedError('Reducer must be sum or mean')
     return z, kl_z
 
 
@@ -65,19 +59,13 @@ def reconstruction_likelihood(x, recon, mask, sigma, i=None):
     return p_x
 
 
-def kl_mask(mask_pred, mask, reducer='mean'):
+def kl_mask(mask_pred, mask):
     tr_masks = mask.view(mask.size()[0], -1)
     tr_mask_preds = mask_pred.view(mask_pred.size()[0], -1)
-
+        
     q_masks = dists.Bernoulli(probs=tr_masks)
     q_masks_recon = dists.Bernoulli(probs=tr_mask_preds)
     kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
-    if reducer == 'mean':
-        kl_masks = torch.mean(kl_masks, [1])
-    elif reducer == 'sum':
-        kl_masks = torch.sum(kl_masks, [1])
-    else:
-        raise NotImplementedError('Reducer must be sum or mean')
     return kl_masks
 
 

@@ -41,7 +41,7 @@ MaskedAIRModelConfiguration = recordtype(
 RunConfiguration = recordtype(
     'RunConfiguration',
     [
-        ('batch_size', 8),
+        ('batch_size', 256),
         ('num_epochs', 50),
         ('vis_every', 50),
         ('visdom_env', 'default'),

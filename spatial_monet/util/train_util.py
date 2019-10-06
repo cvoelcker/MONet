@@ -60,34 +60,39 @@ def visualize_masks(imgs, masks, recons, vis):
 def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                  batch_size=8, visdom_env='default', vis_every=50,
                  load_parameters='false', checkpoint_file='default',
-                 parallel=True, **kwargs):
-    vis = visdom.Visdom(env=visdom_env, port=8456)
-    if load_parameters and os.path.isfile(checkpoint_file):
-        # monet = torch.load('the_whole_fucking_thing')
-        monet.load_state_dict(torch.load(checkpoint_file))
-        print('Restored parameters from', checkpoint_file)
-    else:
-        for w in monet.parameters():
-            std_init = 0.01
-            nn.init.normal_(w, mean=0., std=std_init)
-        monet.module.init_background_weights(trainloader)
-        print('Initialized parameters')
+                 parallel=True, initialize=True, tbhandler=None, 
+                 beta_overwrite=None, **kwargs):
+    print(batch_size)
+    # vis = visdom.Visdom(env=visdom_env, port=8456)
+    # if load_parameters and os.path.isfile(checkpoint_file):
+    #     # monet = torch.load('the_whole_fucking_thing')
+    #     monet.load_state_dict(torch.load(checkpoint_file))
+    #     print('Restored parameters from', checkpoint_file)
+    # elif initialize:
+    #     for w in monet.parameters():
+    #         std_init = 0.01
+    #         nn.init.normal_(w, mean=0., std=std_init)
+    #     monet.module.init_background_weights(trainloader)
+    #     print('Initialized parameters')
 
-    tbhandler = TensorboardHandler('logs/', visdom_env)
+    if tbhandler is None:
+        tbhandler = TensorboardHandler('logs/', visdom_env)
     # optimizer = optim.RMSprop(monet.parameters(), lr=conf.step_size)
     optimizer = torch.optim.Adam(monet.parameters(), lr=step_size)
     all_gradients = []
 
-    beta_max = monet.module.beta
-    gamma_max = monet.module.gamma
-    gamma_increase = gamma_max
+    if beta_overwrite is None:
+        beta_max = monet.module.beta
+        gamma_max = monet.module.gamma
+        gamma_increase = gamma_max
 
-    sigmoid = lambda x: 1 / (1 + np.exp(-x))
+        sigmoid = lambda x: 1 / (1 + np.exp(-x))
 
-    monet.module.beta = sigmoid(0 - 10)
-    monet.module.gamma = gamma_increase
+        monet.module.beta = sigmoid(0 - 10)
+        monet.module.gamma = gamma_increase
+    else:
+        monet.module.beta = beta_overwrite
 
-    print(monet.module.beta)
     torch.autograd.set_detect_anomaly(False)
 
     for epoch in tqdm(list(range(num_epochs))):
@@ -98,11 +103,12 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
         epoch_loss = []
         epoch_reconstruction_loss = []
         for i, data in enumerate(tqdm(trainloader), 0):
-            images, counts = data
+            images = data
             if images.shape[0] < batch_size:
                 continue
             if parallel:
                 images = images.cuda()
+
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])
@@ -117,6 +123,8 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
             epoch_loss.append(loss.detach().item())
             epoch_reconstruction_loss.append(
                 torch.mean(output['reconstruction_loss']).detach().item())
+
+            assert not torch.isnan(torch.sum(loss))
 
             if i % vis_every == vis_every - 1:
                 gradients = [(n, p.grad) for n, p in monet.named_parameters()]
@@ -143,7 +151,8 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                 recon_loss = 0.0
                 kl_loss = 0.0
         torch.save(monet.state_dict(), checkpoint_file)
-        monet.module.beta = sigmoid(0 - 10 + epoch)
+        if beta_overwrite is None:
+            monet.module.beta = sigmoid(0 - 10 + epoch)
 
     print('training done')
     # save_results_after_training(monet, trainloader, conf.checkpoint_file)

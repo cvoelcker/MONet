@@ -162,9 +162,9 @@ class SpatialLocalizationNet(nn.Module):
         constrain_mult = torch.tensor(
             [[[self.max - self.min, 0., 2.], [0., self.max - self.min, 2.]]])
         self.register_buffer('constrain_mult', constrain_mult)
-        constrain_scale = torch.tensor([[[1., 0., 2.], [0., 1., 2.]]])
+        constrain_scale = torch.tensor([[[0.99, 0., 2.], [0., 0.99, 2.]]])
         self.register_buffer('constrain_scale', constrain_scale)
-        constrain_shift = torch.tensor([[[0., 0., -1.], [0., 0., -1.]]])
+        constrain_shift = torch.tensor([[[0.01, 0., -1.], [0., 0.01, -1.]]])
         self.register_buffer('constrain_shift', constrain_shift)
 
     def theta_restrict(self, theta):

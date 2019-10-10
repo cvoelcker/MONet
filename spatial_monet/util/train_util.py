@@ -59,7 +59,7 @@ def visualize_masks(imgs, masks, recons, vis):
 
 def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                  batch_size=8, visdom_env='default', vis_every=50,
-                 load_parameters='false', checkpoint_file='default',
+                 load_parameters=False, checkpoint_file='default',
                  parallel=True, initialize=True, tbhandler=None, 
                  beta_overwrite=None, **kwargs):
     print(batch_size)

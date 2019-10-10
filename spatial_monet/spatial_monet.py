@@ -228,7 +228,7 @@ class SpatialAutoEncoder(nn.Module):
     def forward(self, x, theta):
         z, kl_z, mask = self.encode(x, theta)
 
-        x_reconstruction, mask_pred = self.decode(z, mask, theta)
+        x_reconstruction, mask_pred = self.decode(z, theta)
 
         mask_for_kl = net_util.invert(mask * 0.9998 + 0.0001, theta,
                                       self.image_shape)
@@ -271,7 +271,7 @@ class SpatialAutoEncoder(nn.Module):
 
         return z, kl_z, mask
 
-    def decode(self, z, mask, theta):
+    def decode(self, z, theta):
         decoded = self.decoding_network(z)
 
         patch_reconstruction = decoded[:, :3, :, :]
@@ -517,3 +517,33 @@ class MaskedAIR(nn.Module):
                        'mask_loss': kl_masks,
                        'kl_loss': kl_zs}
         return return_dict
+
+    def reconstruct_from_latent(self, x):
+        '''
+        Given a latent representation of the image, construct a full image again
+
+        Inputs:
+            - x: torch.Tensor shapes (batch, num_slots, latent_dims + 6[theta] + 2[pos])
+        '''
+        images = self.zeros(x.shape[0], 3, self.image_shape[1], self.image_shape[2])
+        scope = self.ones(x.shape[0], 1, self.image_shape[1], self.image_shape[2])
+
+        loss, _, _, masks, embeddings, positions, _, _ = self.forward(
+            x).values()
+        grid = net_util.center_of_mass(masks[:, 1:])
+        full = torch.cat(
+            [embeddings, grid, positions.view(-1, self.num_slots, 6)], -1)
+        latents = x[:, :, :self.component_latent_dim]
+        thetas = x[:, :, self.component_latent_dim+2:]
+        thetas = thetas.view(-1, self.num_slots, 2, 3)
+
+        background = self.background_model(images)
+
+        for i in range(self.num_slots):
+            recon, mask = self.spatial_vae.decode(x[:, i, :], thetas[:, i, :])
+            images += recon * mask * recon
+            scope = scope * (1 - mask)
+        
+        images += scope * background
+
+        return images

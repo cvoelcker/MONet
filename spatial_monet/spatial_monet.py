@@ -436,7 +436,7 @@ class MaskedAIR(nn.Module):
             x).values()
         grid = net_util.center_of_mass(masks[:, 1:])
         full = torch.cat(
-            [embeddings, positions.view(-1, self.num_slots, 6), grid], -1)
+            [grid, positions.view(-1, self.num_slots, 6), embeddings], -1)
         return full, loss
 
     def forward(self, x):
@@ -528,13 +528,8 @@ class MaskedAIR(nn.Module):
         images = self.zeros(x.shape[0], 3, self.image_shape[1], self.image_shape[2])
         scope = self.ones(x.shape[0], 1, self.image_shape[1], self.image_shape[2])
 
-        loss, _, _, masks, embeddings, positions, _, _ = self.forward(
-            x).values()
-        grid = net_util.center_of_mass(masks[:, 1:])
-        full = torch.cat(
-            [embeddings, grid, positions.view(-1, self.num_slots, 6)], -1)
-        latents = x[:, :, :self.component_latent_dim]
-        thetas = x[:, :, self.component_latent_dim+2:]
+        latents = x[:, :, 8:]
+        thetas = x[:, :, 2:8]
         thetas = thetas.view(-1, self.num_slots, 2, 3)
 
         background = self.background_model(images)

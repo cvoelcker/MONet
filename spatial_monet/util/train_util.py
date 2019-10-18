@@ -61,8 +61,8 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                  batch_size=8, visdom_env='default', vis_every=50,
                  load_parameters=False, checkpoint_file='default',
                  parallel=True, initialize=True, tbhandler=None, 
-                 beta_overwrite=None, **kwargs):
-    print(batch_size)
+                 beta_overwrite=None, anomaly_testing=False, 
+                 norm_clip=20, **kwargs):
     # vis = visdom.Visdom(env=visdom_env, port=8456)
     if load_parameters and os.path.isfile(checkpoint_file):
         # monet = torch.load('the_whole_fucking_thing')
@@ -93,7 +93,7 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
     else:
         monet.module.beta = beta_overwrite
 
-    torch.autograd.set_detect_anomaly(False)
+    torch.autograd.set_detect_anomaly(anomaly_testing)
 
     for epoch in tqdm(list(range(num_epochs))):
         running_loss = 0.0
@@ -112,8 +112,9 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])
+            print(loss)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(monet.parameters(), 5)
+            torch.nn.utils.clip_grad_norm_(monet.parameters(), norm_clip)
             optimizer.step()
             running_loss += loss.detach().item()
             mask_loss += output['mask_loss'].mean().detach().item()

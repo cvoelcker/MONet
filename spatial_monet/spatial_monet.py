@@ -119,6 +119,8 @@ class SpatialLocalizationNet(nn.Module):
         self.constrain_theta = constrain_theta
         self.num_slots = num_slots
 
+        print('Contsrained theta: {}'.format(self.constrain_theta))
+
         self.min = 0.05
         self.max = 0.2
 
@@ -167,16 +169,18 @@ class SpatialLocalizationNet(nn.Module):
         constrain_shift = torch.tensor([[[0.01, 0., -1.], [0., 0.01, -1.]]])
         self.register_buffer('constrain_shift', constrain_shift)
 
-    def theta_restrict(self, theta):
-        return F.mse_loss(theta * self.theta_mask, self.theta_mean)
-
     def forward(self, x):
         inp = torch.cat([x, self.coord_map_const.repeat(x.shape[0], 1, 1, 1)],
                         1)
+
+        assert not torch.any(torch.isnan(inp)), 'theta 0'
         conv = self.detection_network(inp)
+        assert not torch.any(torch.isnan(conv)), 'theta 1'
         conv = conv.view(-1, self.conv_size)
         theta = self.theta_regression(conv)
+        assert not torch.any(torch.isnan(theta)), 'theta 2'
         theta = theta.view(-1, self.num_slots, 2, 2, 3)
+        assert not torch.any(torch.isnan(theta)), 'theta 3'
         if self.constrain_theta:
             theta = (theta * self.constrain_mult) + self.constrain_add
         else:
@@ -496,6 +500,9 @@ class MaskedAIR(nn.Module):
 
         thetas_mean, thetas_std = self.spatial_localization_net(inp)
         thetas = dists.Normal(thetas_mean, thetas_std).rsample()
+        assert not torch.any(torch.isnan(inp)), 'theta input'
+        thetas = self.spatial_localization_net(inp)
+        assert not torch.any(torch.isnan(thetas)), 'thetas nan'
 
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
@@ -529,9 +536,13 @@ class MaskedAIR(nn.Module):
         p_x_loss += p_x
 
         # calculate the final loss
-        loss = -p_x_loss.sum(
-            [1, 2, 3]) + self.beta * kl_zs.sum(
-            [1]) + self.gamma * kl_masks.sum([1])
+        loss = -1 * p_x_loss.sum([1, 2, 3]) + \
+               self.beta * kl_zs.sum([1]) + \
+               self.gamma * kl_masks.sum([1])
+        assert not torch.any(torch.isnan(thetas)), 'thetas nan'
+        assert not torch.any(torch.isnan(p_x_loss)), 'p_x_loss nan'
+        assert not torch.any(torch.isnan(kl_zs)), 'kl_zs nan'
+        assert not torch.any(torch.isnan(kl_masks)), 'kl_masks nan'
 
         # torchify all outputs
         masks.insert(0, scope)
@@ -541,6 +552,8 @@ class MaskedAIR(nn.Module):
         latents_std = torch.stack(latents_std, 1)
 
         self.running += 1
+
+        print(torch.mean(thetas, [0,1]))
 
         # currently missing is the mask reconstruction loss
         return_dict = {'loss': loss,

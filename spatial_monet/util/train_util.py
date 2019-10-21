@@ -112,7 +112,6 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
             optimizer.zero_grad()
             output = monet(images)
             loss = torch.mean(output['loss'])
-            print(loss)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(monet.parameters(), norm_clip)
             optimizer.step()

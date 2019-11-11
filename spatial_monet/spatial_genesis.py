@@ -66,7 +66,7 @@ class DecoderNet(nn.Module):
     General parameterized encoding architecture for VAE components
     """
 
-    def __init__(self, component_latent_dim=32, patch_shape=(32, 32),
+    def __init__(self, component_latent_dim=32, patch_shape=(32, 32), output_shape=None,
                  **kwargs):
         super().__init__()
 
@@ -75,7 +75,7 @@ class DecoderNet(nn.Module):
 
         # gave it inverted hourglass shape
         # maybe that helps (random try)
-        self.network = nn.Sequential(
+        network = [
             nn.Conv2d(self.latent_dim + 2, 32, 3, padding=(1, 1)),
             nn.ReLU(inplace=False),
             nn.Conv2d(32, 64, 5, padding=(2, 2)),
@@ -87,7 +87,14 @@ class DecoderNet(nn.Module):
             # nn.Conv2d(64, 32, 3, padding=(1,1)),
             # nn.ReLU(inplace=False),
             nn.Conv2d(64, 4, 1),
-        )
+            nn.ReLU(inplace=False),
+        ]
+
+        if output_shape:
+            network.append(nn.Conv2d(4, output_shape, 1))
+            network.append(nn.Sigmoid())
+
+        self.network = nn.Sequential(*network)
 
         # coordinate patching trick
         coord_map = net_util.create_coord_buffer(self.patch_shape)
@@ -185,28 +192,9 @@ class SpatialLocalizationNet(nn.Module):
             theta_mean = (theta[:, :, 0] * self.constrain_mult) + self.constrain_add
         else:
             theta_mean = (theta[:, :, 0] * self.constrain_scale) + self.constrain_shift
-        theta_std = .1 * torch.sigmoid(theta[:, :, 1] * self.constrain_std) + 1e-10
+        theta_std = .01 * torch.sigmoid(theta[:, :, 1] * self.constrain_std) + 1e-10
         return theta_mean, \
                theta_std
-
-
-class MaskNet(nn.Module):
-    """
-    Attention network for mask prediction
-    """
-
-    def __init__(self, in_channels=7, num_blocks=None, channel_base=32,
-                 **kwargs):
-        super().__init__()
-        self.unet = net_util.UNet(num_blocks=num_blocks,
-                                  in_channels=in_channels,
-                                  out_channels=1,
-                                  channel_base=channel_base)
-
-    def forward(self, x):
-        logits = self.unet(x)
-        alpha = torch.sigmoid(logits)
-        return alpha
 
 
 class SpatialAutoEncoder(nn.Module):
@@ -228,24 +216,15 @@ class SpatialAutoEncoder(nn.Module):
         self.encoding_network = EncoderNet(component_latent_dim//2, patch_shape)
         self.mask_encoding_network = EncoderNet(component_latent_dim//2, patch_shape, input_size=7)
         self.decoding_network = DecoderNet(component_latent_dim//2, patch_shape)
-        self.mask_decoding_network = DecoderNet(component_latent_dim//2, patch_shape)
-        self.mask_network = MaskNet(num_blocks=num_blocks)
-
+        self.mask_decoding_network = DecoderNet(component_latent_dim//2, patch_shape, output_shape=1)
         # self.spatial_network = SpatialLocalizationNet(conf)
 
     def forward(self, x, theta):
-        z, means, sigmas, kl_z, z_mask, mean_mask, sigma_mask, kl_mask = self.encode(x, theta)
+        z, means, sigmas, kl_z, mask, z_mask, mean_mask, sigma_mask, kl_mask = self.encode(x, theta)
 
-        x_reconstruction, mask_pred = self.decode(z, z_mask, theta)
+        x_reconstruction, _ = self.decode(z, z_mask, theta)
 
-        mask_for_kl = net_util.invert(mask * 0.9998 + 0.0001, theta,
-                                      self.image_shape)
         mask = net_util.invert(mask, theta, self.image_shape)
-
-        # calculate mask prediction error
-        kl_mask_pred = net_util.kl_mask(
-            mask_pred,
-            mask_for_kl)
 
         # calculate reconstruction error
         scope = x[:, 6:, :, :]
@@ -263,48 +242,45 @@ class SpatialAutoEncoder(nn.Module):
                torch.cat([means, mean_mask], -1), \
                torch.cat([sigmas, sigma_mask], -1), \
                torch.cat([kl_z, kl_mask], -1), \
-               p_x, \
-               kl_mask_pred
+               p_x
 
     def encode(self, x, theta):
         # calculate spatial position for object from joint mask
         # and image
-        grid = F.affine_grid(theta,
-                             torch.Size((x.size()[0], 1, *self.patch_shape)))
+        grid = F.affine_grid(theta, torch.Size((x.size()[0], 1, *self.patch_shape)))
 
         # get patch from theta and grid
         x_patch = net_util.transform(x, grid, theta)
 
         # generate object mask for patch
-        mask = self.mask_network(x_patch)
+        mean_mask, sigma_mask = self.mask_encoding_network(x_patch)
+        sigma_mask = 2 * torch.sigmoid(sigma_mask) + 1e-10
+        z_mask, kl_z_mask = net_util.differentiable_sampling(mean_mask, sigma_mask, self.prior)
+        mask = self.mask_decoding_network(z_mask)
 
         # concatenate x and new mask
-        encoder_input = torch.cat([x_patch, mask.detach()], 1)
+        encoder_input = torch.cat([x_patch, mask], 1)
 
         # generate latent embedding of the patch
         mean_img, sigma_img = self.encoding_network(encoder_input)
         sigma_img = 2 * torch.sigmoid(sigma_img) + 1e-10
         z_img, kl_z_img = net_util.differentiable_sampling(mean_img, sigma_img, self.prior)
         
-        mean_mask, sigma_mask = self.mask_encoding_network(encoder_input)
-        sigma_mask = 2 * torch.sigmoid(sigma_mask) + 1e-10
-        z_mask, kl_z_mask = net_util.differentiable_sampling(mean_mask, sigma_mask, self.prior)
-
-        return z_img, mean_img, sigma_img, kl_z_img, z_mask, mean_mask, sigma_mask, kl_z_mask
+        return z_img, mean_img, sigma_img, kl_z_img, mask, z_mask, mean_mask, sigma_mask, kl_z_mask
 
     def decode(self, z_img, z_mask, theta):
         decoded = self.decoding_network(z_img)
-        mask_pred = self.mask_decoding_network(z_mask)[:, 3:]
 
         patch_reconstruction = decoded[:, :3, :, :]
+        mask = self.mask_decoding_network(z_mask)
+        mask = torch.sigmoid(mask)
 
         # transform all components into original space
         x_reconstruction = net_util.invert(patch_reconstruction, theta,
                                            self.image_shape)
-        mask_pred = torch.sigmoid(mask_pred) * 0.9998 + 0.0001
-        mask_pred = net_util.invert(mask_pred, theta, self.image_shape)
+        mask = net_util.invert(mask, theta, self.image_shape)
 
-        return x_reconstruction, mask_pred
+        return x_reconstruction, mask
 
 
 class BackgroundEncoder(nn.Module):
@@ -321,42 +297,6 @@ class BackgroundEncoder(nn.Module):
     def forward(self, x):
         loss = torch.zeros_like(x[:, 0, 0, 0])
         return torch.zeros_like(x[:, :3, :, :]), loss
-
-
-class VAEBackgroundModel(nn.Module):
-    """
-    Background encoder model which captures the rest of the picture
-    Not completely stupid anymore
-    """
-
-    def __init__(self, image_shape=(256, 256)):
-        super().__init__()
-        self.image_shape = image_shape
-        self.enc_net = EncoderNet(3, image_shape, 4)
-        self.dec_net = DecoderNet(32, image_shape)
-        self.prior = 1.
-
-    def forward(self, x, scope):
-        # concatenate x and new mask
-        encoder_input = torch.cat([x, scope], 1)
-
-        # generate latent embedding of the patch
-        mean, sigma = self.enc_net(encoder_input)
-        z, kl_z = net_util.differentiable_sampling(mean, sigma, self.prior)
-        decoded = self.dec_net(z)
-        return decoded[:, :, :, :], kl_z
-
-    def init_bias(self, images):
-        with torch.no_grad():
-            self.dec_net.network[-1].bias.zero_()
-            norm = len(images)
-            append = torch.zeros((1, self.image_shape[0], self.image_shape[1]))
-            for image in images:
-                # for image in image_batch[0]:
-                fill = torch.cat([image, append], 0).cuda()
-                self.dec_net.network[-1].bias += torch.mean(
-                    fill.view(-1, 1))
-            self.dec_net.network[-1].bias /= norm
 
 
 class FCBackgroundModel(nn.Module):
@@ -488,18 +428,18 @@ class MaskedAIR(nn.Module):
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
             theta = dists.Normal(thetas_mean[:, i], thetas_std[:, i]).rsample()
+            # print(theta)
             thetas.append(theta)
-            print(theta)
-            print(thetas_mean[:, i])
             inp = torch.cat(
                 [x, ((x - background) - total_reconstruction).detach(), scope],
                 1)
-            x_recon, mask, z, means, sigmas, kl_z, p_x, kl_m = self.spatial_vae(
+            x_recon, mask, z, means, sigmas, kl_z, p_x = self.spatial_vae(
                 inp, theta)
+            # print(x_recon.mean())
+            # print(mask.mean())
             scope = scope - mask
             kl_zs += kl_z
             p_x_loss += p_x
-            kl_masks += kl_m
             total_reconstruction += mask * x_recon
 
             # save for visualization
@@ -511,12 +451,13 @@ class MaskedAIR(nn.Module):
 
         total_reconstruction += background * scope
         assert torch.all(torch.isfinite(total_reconstruction))
+        masks.insert(0, scope)
+        masks = torch.cat(masks, 1)
         # calculate reconstruction error
         p_x = net_util.reconstruction_likelihood(x,
                                                  background,
                                                  (1 - torch.sum(
-                                                     torch.cat(masks, 1), 1,
-                                                     True)),
+                                                     masks, 1, True)),
                                                  self.bg_sigma,
                                                  self.running)
         p_x_loss += p_x
@@ -525,16 +466,12 @@ class MaskedAIR(nn.Module):
 
         # calculate the final loss
         loss = -1 * p_x_loss.sum([1, 2, 3]) + \
-               self.beta * kl_zs.sum([1]) + \
-               self.gamma * kl_masks.sum([1])
+               self.beta * kl_zs.sum([1])
         assert not torch.any(torch.isnan(thetas)), 'thetas nan'
         assert not torch.any(torch.isnan(p_x_loss)), 'p_x_loss nan'
         assert not torch.any(torch.isnan(kl_zs)), 'kl_zs nan'
-        assert not torch.any(torch.isnan(kl_masks)), 'kl_masks nan'
 
         # torchify all outputs
-        masks.insert(0, scope)
-        masks = torch.cat(masks, 1)
         latents = torch.stack(latents, 1)
         latents_mean = torch.stack(latents_mean, 1)
         latents_std = torch.stack(latents_std, 1)
@@ -552,7 +489,6 @@ class MaskedAIR(nn.Module):
                        'theta': thetas,
                        'thetas_mean': thetas_mean,
                        'thetas_std': thetas_std,
-                       'mask_loss': kl_masks,
                        'kl_loss': kl_zs}
         return return_dict
     

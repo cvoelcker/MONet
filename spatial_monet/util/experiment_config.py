@@ -7,7 +7,7 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('--load_params', action='store_true')
 parser.add_argument('--load_location',
-                    default='test_data')
+                    default='checkpoints/default')
 parser.add_argument('--data_location',
                     default='test_data')
 parser.add_argument('--constrain_theta', action='store_true')
@@ -18,16 +18,17 @@ parser.add_argument('--step_size', type=float, default=1e-4)
 parser.add_argument('--visdom_env', default='clippingandregularized')
 parser.add_argument('--beta', type=float, default=1.0)
 parser.add_argument('--gamma', type=float, default=1.0)
+parser.add_argument('--latent-dim', type=int, default=16)
 
 
 MaskedAIRModelConfiguration = recordtype(
     'MaskedAIRModelConfiguration',
     [
-        ('component_latent_dim', 16),
+        ('component_latent_dim', 64),
         ('background_latent_dim', 1),
         ('latent_prior', 1.0),
-        ('patch_shape', (256, 256)),
-        ('image_shape', (256, 256)),
+        ('patch_shape', (32, 32)),
+        ('image_shape', (128, 128)),
         ('bg_sigma', 0.01),
         ('fg_sigma', 0.05),
         ('num_blocks', 2),
@@ -95,6 +96,7 @@ def parse_args_to_config(args):
     model_conf.constrain_theta = args.constrain_theta
     model_conf.beta = args.beta
     model_conf.gamma = args.gamma
+    model_conf.component_latent_dim = args.latent_dim
 
     full_conf = ExperimentConfiguration(run_conf, model_conf)
     return full_conf

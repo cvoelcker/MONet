@@ -72,7 +72,7 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
         for w in monet.parameters():
             std_init = 0.01
             nn.init.normal_(w, mean=0., std=std_init)
-        monet.module.init_background_weights(trainloader)
+        monet.module.init_background_weights(trainloader.dataset.get_all_imgs())
         print('Initialized parameters')
 
     if tbhandler is None:
@@ -97,7 +97,6 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
 
     for epoch in tqdm(list(range(num_epochs))):
         running_loss = 0.0
-        mask_loss = 0.0
         recon_loss = 0.0
         kl_loss = 0.0
         epoch_loss = []
@@ -116,7 +115,6 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
             torch.nn.utils.clip_grad_norm_(monet.parameters(), norm_clip)
             optimizer.step()
             running_loss += loss.detach().item()
-            mask_loss += output['mask_loss'].mean().detach().item()
             kl_loss += output['kl_loss'].mean().detach().item()
             recon_loss += output['reconstruction_loss'].mean().detach().item()
 
@@ -125,6 +123,14 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                 torch.mean(output['reconstruction_loss']).detach().item())
 
             assert not torch.isnan(torch.sum(loss))
+            
+            # check decomposed
+            with torch.no_grad():
+                zs, loss = monet.module.build_flat_image_representation(images)
+                recon, loss = monet.module.reconstruct_from_latent(zs, imgs=images)
+
+                # print(torch.mean(recon - output['reconstructions']))
+
 
             if i % vis_every == vis_every - 1:
                 gradients = [(n, p.grad) for n, p in monet.named_parameters()]
@@ -132,8 +138,8 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                     torch.mean(g[1]).item() if torch.is_tensor(g[1]) else g[
                         1])) for g in gradients]
                 all_gradients.append(gradients)
-                # print('[%d, %5d] loss: %.3f' %
-                #       (epoch + 1, i + 1, running_loss / conf.vis_every))
+                print('[%d, %5d] loss: %.3f' %
+                      (epoch + 1, i + 1, running_loss / vis_every))
                 # visualize_masks(numpify(images[:8]),
                 #                 numpify(output['masks'][:8]),
                 #                 numpify(output['reconstructions'][:8]),
@@ -142,15 +148,16 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                     'loss': running_loss / vis_every,
                     'kl_loss': kl_loss / vis_every,
                     'px_loss': recon_loss / vis_every,
-                    'mask_loss': mask_loss / vis_every},
                     'step': vis_every * batch_size,
-                }
+                }}
                 tbhandler.run(monet, handler_data)
                 running_loss = 0.0
-                mask_loss = 0.0
                 recon_loss = 0.0
                 kl_loss = 0.0
+                torch.save(output, 'current_res')
+                torch.save(images, 'current_img')
         torch.save(monet.state_dict(), checkpoint_file)
+
         if beta_overwrite is None:
             monet.module.beta = sigmoid(0 - 10 + epoch)
 

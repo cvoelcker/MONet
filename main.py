@@ -8,7 +8,7 @@ import spatial_monet.util.experiment_config as experiment_config
 
 from spatial_monet.util.train_util import run_training
 
-import spatial_monet.spatial_monet as spatial_monet
+import spatial_monet.spatial_genesis as spatial_monet
 
 
 def masked_air_experiment():
@@ -47,7 +47,7 @@ def masked_air_experiment():
         sum([param.nelement() for param in monet.parameters()])
         monet = nn.DataParallel(monet, device_ids=[device_id])
     run_dict = experiment_config.record_type_to_dict(run_conf)
-    run_training(monet, trainloader, **run_dict)
+    run_training(monet, trainloader, **run_dict, beta_overwrite = 1.)
 
 
 if __name__ == '__main__':

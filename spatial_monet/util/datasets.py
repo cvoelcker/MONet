@@ -141,3 +141,10 @@ class Atari(Dataset):
 
     def get_shape(self):
         return self.dataset[0].shape
+
+    def get_all_imgs(self):
+        for raw in self.dataset:
+            img = Image.fromarray(raw)
+            if self.transform is not None:
+                img = self.transform(img)
+            yield img

@@ -131,7 +131,7 @@ class SpatialLocalizationNet(nn.Module):
 
         self.detection_network = nn.Sequential(
             # block 1
-            nn.Conv2d(8, 16, 3, stride=1, padding=(1, 1)),
+            nn.Conv2d(9, 16, 3, stride=1, padding=(1, 1)),
             nn.ReLU(inplace=False),
             nn.MaxPool2d(2, stride=2),
             # output size = 32, width/2, length/2
@@ -367,7 +367,7 @@ class MaskedAIR(nn.Module):
         self.spatial_localization_net = SpatialLocalizationNet(image_shape,
                                                                patch_shape,
                                                                constrain_theta,
-                                                               num_slots)
+                                                               1)
 
         self.beta = beta
         self.gamma = gamma
@@ -421,18 +421,21 @@ class MaskedAIR(nn.Module):
         background = background[:, :3, :, :]
 
         # get all thetas at once
-        inp = torch.cat([x, (x - background).detach()], 1)
 
-        thetas_mean, thetas_std = self.spatial_localization_net(inp)
         thetas = []
+        thetas_mean = []
+        thetas_std = []
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
-            theta = dists.Normal(thetas_mean[:, i], thetas_std[:, i]).rsample()
-            # print(theta)
-            thetas.append(theta)
             inp = torch.cat(
                 [x, ((x - background) - total_reconstruction).detach(), scope],
                 1)
+            theta_mean, theta_std = self.spatial_localization_net(inp)
+            theta = dists.Normal(theta_mean, theta_std).rsample().squeeze()
+            # print(theta)
+            thetas.append(theta)
+            thetas_mean.append(theta_mean)
+            thetas_std.append(theta_std)
             x_recon, mask, z, means, sigmas, kl_z, p_x = self.spatial_vae(
                 inp, theta)
             # print(x_recon.mean())
@@ -463,6 +466,8 @@ class MaskedAIR(nn.Module):
         p_x_loss += p_x
 
         thetas = torch.cat(thetas, 1)
+        thetas_mean = torch.cat(thetas_mean, 1)
+        thetas_std = torch.cat(thetas_std, 1)
 
         # calculate the final loss
         loss = -1 * p_x_loss.sum([1, 2, 3]) + \

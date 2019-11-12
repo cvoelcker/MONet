@@ -48,7 +48,7 @@ def invert(x, theta, image_shape, padding='zeros'):
 def differentiable_sampling(mean, sigma, prior_sigma):
     dist = dists.Normal(mean, sigma)
     dist_0 = dists.Normal(0., prior_sigma)
-    z = mean + sigma * dist_0.sample()
+    z = dist.rsample()
     kl_z = dists.kl_divergence(dist, dist_0)
     return z, kl_z
 
@@ -120,3 +120,8 @@ class UNet(nn.Module):
             cur = self.up_convs[i](cur)
 
         return self.final_conv(cur)
+
+
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size()[0], -1)

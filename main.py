@@ -9,6 +9,7 @@ import spatial_monet.util.experiment_config as experiment_config
 from spatial_monet.util.train_util import run_training
 
 import spatial_monet.spatial_genesis as spatial_monet
+import spatial_monet.genesis as genesis
 
 
 def masked_air_experiment():
@@ -35,7 +36,7 @@ def masked_air_experiment():
     parallel=False
     model_conf_dict = experiment_config.record_type_to_dict(model_conf)
     print(model_conf_dict)
-    monet = spatial_monet.MaskedAIR(**model_conf_dict)
+    monet = genesis.GENESIS(**model_conf_dict)
     if run_conf.parallel:
         parallel = True
         device_id = 0

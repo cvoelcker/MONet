@@ -24,11 +24,11 @@ parser.add_argument('--latent-dim', type=int, default=16)
 MaskedAIRModelConfiguration = recordtype(
     'MaskedAIRModelConfiguration',
     [
-        ('component_latent_dim', 64),
+        ('latent_dim', 64),
         ('background_latent_dim', 1),
         ('latent_prior', 1.0),
         ('patch_shape', (32, 32)),
-        ('image_shape', (256, 256)),
+        ('image_shape', (64, 64)),
         ('bg_sigma', 0.01),
         ('fg_sigma', 0.05),
         ('num_blocks', 2),
@@ -96,7 +96,7 @@ def parse_args_to_config(args):
     model_conf.constrain_theta = args.constrain_theta
     model_conf.beta = args.beta
     model_conf.gamma = args.gamma
-    model_conf.component_latent_dim = args.latent_dim
+    model_conf.latent_dim = args.latent_dim
 
     full_conf = ExperimentConfiguration(run_conf, model_conf)
     return full_conf

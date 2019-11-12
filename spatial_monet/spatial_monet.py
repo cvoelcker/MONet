@@ -226,7 +226,7 @@ class SpatialAutoEncoder(nn.Module):
         self.image_shape = image_shape
 
         self.encoding_network = EncoderNet(component_latent_dim//2, patch_shape)
-        self.mask_encoding_network = EncoderNet(component_latent_dim//2, patch_shape, input_size=7)
+        self.mask_encoding_network = EncoderNet(component_latent_dim//2, patch_shape)
         self.decoding_network = DecoderNet(component_latent_dim//2, patch_shape)
         self.mask_decoding_network = DecoderNet(component_latent_dim//2, patch_shape)
         self.mask_network = MaskNet(num_blocks=num_blocks)
@@ -234,7 +234,7 @@ class SpatialAutoEncoder(nn.Module):
         # self.spatial_network = SpatialLocalizationNet(conf)
 
     def forward(self, x, theta):
-        z, means, sigmas, kl_z, z_mask, mean_mask, sigma_mask, kl_mask = self.encode(x, theta)
+        mask, z, means, sigmas, kl_z, z_mask, mean_mask, sigma_mask, kl_mask = self.encode(x, theta)
 
         x_reconstruction, mask_pred = self.decode(z, z_mask, theta)
 
@@ -290,7 +290,7 @@ class SpatialAutoEncoder(nn.Module):
         sigma_mask = 2 * torch.sigmoid(sigma_mask) + 1e-10
         z_mask, kl_z_mask = net_util.differentiable_sampling(mean_mask, sigma_mask, self.prior)
 
-        return z_img, mean_img, sigma_img, kl_z_img, z_mask, mean_mask, sigma_mask, kl_z_mask
+        return mask, z_img, mean_img, sigma_img, kl_z_img, z_mask, mean_mask, sigma_mask, kl_z_mask
 
     def decode(self, z_img, z_mask, theta):
         decoded = self.decoding_network(z_img)

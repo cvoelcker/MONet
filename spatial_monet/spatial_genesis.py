@@ -25,11 +25,11 @@ class EncoderNet(nn.Module):
         self.patch_shape = patch_shape
 
         self.network = nn.Sequential(
-            nn.Conv2d(input_size, 32, 3, padding=(1, 1)),
+            nn.Conv2d(input_size, 16, 3, padding=(1, 1)),
             nn.ReLU(inplace=False),
             nn.MaxPool2d(2, stride=2),
 
-            nn.Conv2d(32, 32, 3, padding=(1, 1)),
+            nn.Conv2d(16, 32, 3, padding=(1, 1)),
             nn.ReLU(inplace=False),
             nn.MaxPool2d(2, stride=2),
 
@@ -76,13 +76,13 @@ class DecoderNet(nn.Module):
         # gave it inverted hourglass shape
         # maybe that helps (random try)
         network = [
-            nn.Conv2d(self.latent_dim + 2, 32, 3, padding=(1, 1)),
+            nn.Conv2d(self.latent_dim + 2, 16, 5, padding=(2, 2)),
             nn.ReLU(inplace=False),
-            nn.Conv2d(32, 64, 5, padding=(2, 2)),
+            nn.Conv2d(16, 32, 5, padding=(2, 2)),
             nn.ReLU(inplace=False),
             # nn.Conv2d(64, 64, 5, padding=(2,2)),
             # nn.ReLU(inplace=False),
-            nn.Conv2d(64, 64, 3, padding=(1, 1)),
+            nn.Conv2d(32, 64, 3, padding=(1, 1)),
             nn.ReLU(inplace=False),
             # nn.Conv2d(64, 32, 3, padding=(1,1)),
             # nn.ReLU(inplace=False),
@@ -143,19 +143,22 @@ class SpatialLocalizationNet(nn.Module):
             # output size = 64, width/4, length/4
 
             # # block 3
-            nn.Conv2d(32, 64, 3, stride=1, padding=(1, 1)),
+            nn.Conv2d(32, 32, 3, stride=1, padding=(1, 1)),
             nn.ReLU(inplace=False),
             nn.MaxPool2d(2, stride=2),
             # # output size = 128, width/8 length/8
         )
         self.conv_size = int(
-            64 * self.image_shape[0] / 8 * self.image_shape[1] / 8)
+            32 * self.image_shape[0] / 8 * self.image_shape[1] / 8)
         self.theta_regression = nn.Sequential(
             # nn.Linear(self.conv_size, self.conv_size//2),
             # nn.ReLU(inplace=False),
-            nn.Linear(self.conv_size, 256),
+            nn.Linear(self.conv_size, 64),
             nn.ReLU(inplace=False),
-            nn.Linear(256, 2 * 6 * self.num_slots),
+        )
+        self.recurrent_net = nn.GRU(64, 64)
+        self.theta_output = nn.Sequential(
+            nn.Linear(64, 2 * 6 * self.num_slots),
             nn.Sigmoid()
         )
 
@@ -176,7 +179,7 @@ class SpatialLocalizationNet(nn.Module):
         constrain_std = torch.tensor([[[1., 0., 1.], [0., 1., 1.]]])
         self.register_buffer('constrain_std', constrain_std)
 
-    def forward(self, x):
+    def forward(self, x, hidden):
         inp = torch.cat([x, self.coord_map_const.repeat(x.shape[0], 1, 1, 1)],
                         1)
 
@@ -185,6 +188,9 @@ class SpatialLocalizationNet(nn.Module):
         assert not torch.any(torch.isnan(conv)), 'theta 1'
         conv = conv.view(-1, self.conv_size)
         theta = self.theta_regression(conv)
+        theta = theta.unsqueeze(0)
+        theta, hidden = self.recurrent_net(theta, hidden)
+        theta = self.theta_output(theta)
         assert not torch.any(torch.isnan(theta)), 'theta 2'
         theta = theta.view(-1, self.num_slots, 2, 2, 3)
         assert not torch.any(torch.isnan(theta)), 'theta 3'
@@ -192,9 +198,10 @@ class SpatialLocalizationNet(nn.Module):
             theta_mean = (theta[:, :, 0] * self.constrain_mult) + self.constrain_add
         else:
             theta_mean = (theta[:, :, 0] * self.constrain_scale) + self.constrain_shift
-        theta_std = .01 * torch.sigmoid(theta[:, :, 1] * self.constrain_std) + 1e-10
+        theta_std = .01 * (theta[:, :, 1] * self.constrain_std) + 1e-10
         return theta_mean, \
-               theta_std
+               theta_std, \
+               hidden
 
 
 class SpatialAutoEncoder(nn.Module):
@@ -425,21 +432,23 @@ class MaskedAIR(nn.Module):
         thetas = []
         thetas_mean = []
         thetas_std = []
+
+        # init is very ugly!
+        hidden = torch.zeros_like(loss).unsqueeze(1).unsqueeze(0).repeat(1, 1, 64)
+
         # construct the patchwise shaping of the model
         for i in range(self.num_slots):
             inp = torch.cat(
-                [x, ((x - background) - total_reconstruction).detach(), scope],
+                [x, (x - background - total_reconstruction).detach(), scope.detach()],
                 1)
-            theta_mean, theta_std = self.spatial_localization_net(inp)
-            theta = dists.Normal(theta_mean, theta_std).rsample().squeeze()
-            # print(theta)
+            theta_mean, theta_std, hidden = self.spatial_localization_net(inp, hidden)
+            # theta = dists.Normal(theta_mean, theta_std).rsample().squeeze()
+            theta = theta_mean.squeeze()
             thetas.append(theta)
             thetas_mean.append(theta_mean)
             thetas_std.append(theta_std)
             x_recon, mask, z, means, sigmas, kl_z, p_x = self.spatial_vae(
                 inp, theta)
-            # print(x_recon.mean())
-            # print(mask.mean())
             scope = scope - mask
             kl_zs += kl_z
             p_x_loss += p_x

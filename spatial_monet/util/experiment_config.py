@@ -28,7 +28,7 @@ MaskedAIRModelConfiguration = recordtype(
         ('background_latent_dim', 1),
         ('latent_prior', 1.0),
         ('patch_shape', (32, 32)),
-        ('image_shape', (128, 128)),
+        ('image_shape', (256, 256)),
         ('bg_sigma', 0.01),
         ('fg_sigma', 0.05),
         ('num_blocks', 2),

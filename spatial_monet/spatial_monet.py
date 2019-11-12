@@ -185,7 +185,7 @@ class SpatialLocalizationNet(nn.Module):
             theta_mean = (theta[:, :, 0] * self.constrain_mult) + self.constrain_add
         else:
             theta_mean = (theta[:, :, 0] * self.constrain_scale) + self.constrain_shift
-        theta_std = .1 * torch.sigmoid(theta[:, :, 1] * self.constrain_std) + 1e-10
+        theta_std = .1 * theta[:, :, 1] * self.constrain_std + 1e-10
         return theta_mean, \
                theta_std
 
@@ -377,9 +377,6 @@ class FCBackgroundModel(nn.Module):
             norm = 0.
             append = torch.zeros((1, self.image_shape[0], self.image_shape[1]))
             for image in images:
-                # for image in image_batch:
-                # print(image.shape)
-                # print(append.shape)
                 fill = torch.cat([image, append], 0).cuda()
                 self.net.weight.data += fill.view(-1, 1)
                 norm += 1.
@@ -489,8 +486,6 @@ class MaskedAIR(nn.Module):
         for i in range(self.num_slots):
             theta = dists.Normal(thetas_mean[:, i], thetas_std[:, i]).rsample()
             thetas.append(theta)
-            print(theta)
-            print(thetas_mean[:, i])
             inp = torch.cat(
                 [x, ((x - background) - total_reconstruction).detach(), scope],
                 1)

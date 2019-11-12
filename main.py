@@ -8,7 +8,7 @@ import spatial_monet.util.experiment_config as experiment_config
 
 from spatial_monet.util.train_util import run_training
 
-import spatial_monet.spatial_genesis as spatial_monet
+import spatial_monet.spatial_monet as spatial_monet
 
 
 def masked_air_experiment():

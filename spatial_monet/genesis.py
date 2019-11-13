@@ -33,6 +33,12 @@ class ConvEncoderNet(nn.Module):
 
             nn.Conv2d(32, 64, 3, padding=(1, 1)),
             nn.ReLU(inplace=False),
+            
+            nn.Conv2d(64, 64, 3, padding=(1, 1)),
+            nn.ReLU(inplace=False),
+            
+            nn.Conv2d(64, 64, 3, padding=(1, 1)),
+            nn.ReLU(inplace=False),
             nn.MaxPool2d(2, stride=2),
         )
         self.conv_size = int(
@@ -67,27 +73,6 @@ class RecEncoderNet(nn.Module):
         self.img_shape = img_shape
         self.num_slots = num_slots
 
-        self.conv_size = int(
-            64 * self.img_shape[0] / (2 ** 3) * self.img_shape[1] / (
-                    2 ** 3))
-
-        self.conv = nn.Sequential(
-            nn.Conv2d(input_size, 16, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            nn.MaxPool2d(2, stride=2),
-
-            nn.Conv2d(16, 32, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            nn.MaxPool2d(2, stride=2),
-
-            nn.Conv2d(32, 64, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            nn.MaxPool2d(2, stride=2),
-
-            net_util.Flatten(),
-
-            nn.Linear(self.conv_size, self.latent_dim)
-        )
         self.rec = nn.GRU(self.latent_dim, self.latent_dim, batch_first=True)
     
         self.mean_mlp = nn.Sequential(
@@ -101,10 +86,7 @@ class RecEncoderNet(nn.Module):
         latent_dim = self.latent_dim
         num_slots = self.num_slots
         # reshaping is necessary for different scalings of conv and rec part
-        x_flat = x.view(-1, 3, *self.img_shape)
-        x_compressed = self.conv(x_flat)
-        x_sequence = x_compressed.view(-1, num_slots, latent_dim)
-        x_rec, _ = self.rec(x_sequence)
+        x_rec, _ = self.rec(x)
         x_rec = x_rec.contiguous().view(-1, latent_dim)
         mean = self.mean_mlp(x_rec)
         sigma = 2 * torch.sigmoid(self.sigma_mlp(x_rec)) + 1e-10
@@ -116,6 +98,7 @@ class RecEncoderNet(nn.Module):
 class DecoderNet(nn.Module):
     """
     General parameterized encoding architecture for VAE components
+    Implements a spatial braodcast decoder architecture
     """
 
     def __init__(self, img_shape=(32, 32), latent_dim=32, output_size=1, **kwargs):
@@ -124,20 +107,24 @@ class DecoderNet(nn.Module):
         self.latent_dim = latent_dim
         self.img_shape = img_shape
 
-        # gave it inverted hourglass shape
-        # maybe that helps (random try)
         network = [
-            nn.Conv2d(self.latent_dim + 2, 16, 5, padding=(2, 2)),
+            nn.Conv2d(self.latent_dim + 2, 64, 5, padding=(2, 2)),
             nn.ReLU(inplace=False),
-            nn.Conv2d(16, 32, 5, padding=(2, 2)),
+            nn.Conv2d(64, 32, 5, padding=(2, 2)),
             nn.ReLU(inplace=False),
             # nn.Conv2d(64, 64, 5, padding=(2,2)),
             # nn.ReLU(inplace=False),
-            nn.Conv2d(32, 64, 3, padding=(1, 1)),
+            nn.Conv2d(32, 32, 3, padding=(1, 1)),
             nn.ReLU(inplace=False),
-            # nn.Conv2d(64, 32, 3, padding=(1,1)),
-            # nn.ReLU(inplace=False),
-            nn.Conv2d(64, output_size, 1),
+            nn.Conv2d(32, 32, 3, padding=(1, 1)),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(32, 32, 3, padding=(1, 1)),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(32, 32, 3, padding=(1, 1)),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(32, 16, 3, padding=(1,1)),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(16, output_size, 1),
         ]
         if output_size > 1:
             network.append(nn.ReLU(inplace=False))
@@ -171,7 +158,7 @@ class GENESIS(nn.Module):
             image_shape=(256, 256), num_blocks=2, num_slots=8,
             constrain_theta=False, beta=1., gamma=1., **kwargs):
         super().__init__()
-        self.bg_sigma = bg_sigma
+        self.bg_sigma = fg_sigma
         self.fg_sigma = fg_sigma
         self.latent_prior = latent_prior
         self.latent_dim = latent_dim
@@ -185,7 +172,12 @@ class GENESIS(nn.Module):
         
         # networks
 
-        self.mask_encoder = RecEncoderNet(
+        self.mask_encoder = ConvEncoderNet(
+                img_shape=self.image_shape, 
+                latent_dim=self.latent_dim,
+                num_slots=num_slots,
+                input_size=3)
+        self.rec_encoder = RecEncoderNet(
                 img_shape=self.image_shape, 
                 latent_dim=self.latent_dim,
                 num_slots=num_slots)
@@ -202,6 +194,12 @@ class GENESIS(nn.Module):
                 img_shape=self.image_shape,
                 latent_dim=self.latent_dim,
                 output_size=3)
+
+        self.rec_prior = nn.GRU(self.latent_dim, self.latent_dim, batch_first=True)
+        self.mlp_prior = nn.Sequential(
+                nn.Linear(self.latent_dim, self.latent_dim),
+                nn.ReLU(),
+                nn.Linear(self.latent_dim, self.latent_dim))
         
         # graph_depth = grid_x, grid_y, z_mask_mean/std, z_img_mean/std
         self.graph_depth = 2 + 4 * latent_dim
@@ -214,8 +212,8 @@ class GENESIS(nn.Module):
         batch_size = x.shape[0]
 
         # generate recurrent mask z_s and logits
-        mask_input = x.unsqueeze(0).repeat(self.num_slots, 1, 1, 1, 1)
-        mask_mean, mask_std = self.mask_encoder(mask_input)
+        img_enc, _ = self.mask_encoder(x)
+        mask_mean, mask_std = self.rec_encoder(img_enc.unsqueeze(1).repeat(1, self.num_slots, 1))
         mask_mean = mask_mean.view(batch_size * self.num_slots, -1)
         mask_std = mask_std.view(batch_size * self.num_slots, -1)
         z_mask, kl_mask = net_util.differentiable_sampling(mask_mean, mask_std, 1.)
@@ -225,7 +223,7 @@ class GENESIS(nn.Module):
         # generate masks via softmax (to forgo for loop for stick-breaking)
         masks = torch.softmax(mask_logits, 1)
         masks = masks.view(-1, 1, *self.image_shape)
-        reconstruction_input = mask_input.view(-1, 3, *self.image_shape)
+        reconstruction_input = x.repeat_interleave(self.num_slots, 0)
         
         # generate reconstructions
         reconstruction_input = torch.cat([reconstruction_input, masks], 1)
@@ -253,15 +251,30 @@ class GENESIS(nn.Module):
         masks = masks.view(batch_size, self.num_slots, 1, *self.image_shape)
         recons = recons.view(batch_size, self.num_slots, 3, *self.image_shape)
 
+        # calculate priors
+        
+        _prior_u = torch.zeros_like(z_mask[:, :1, :])
+        _prior_input = torch.cat([_prior_u, z_mask[:, :-1]], 1)
+        prior_mask_mean, _ = self.rec_prior(_prior_input)
+        prior_dist_mask = dists.Normal(prior_mask_mean, 1.)
+        poster_dist_mask = dists.Normal(mask_mean, mask_std)
+        kl_mask = dists.kl_divergence(poster_dist_mask, prior_dist_mask)
+
+        prior_img_mean = self.mlp_prior(z_mask.view(batch_size * self.num_slots, -1))
+        prior_img_mean = prior_img_mean.view(batch_size, self.num_slots, -1)
+        prior_dist_img = dists.Normal(prior_img_mean, 1.)
+        poster_dist_img = dists.Normal(recon_mean, recon_std)
+        kl_recon = dists.kl_divergence(poster_dist_img, prior_dist_img)
+
         # reconstruct image
         img = torch.sum(masks * recons, 1)
 
         # reshape all loss terms
         kl_mask = kl_mask.view(batch_size, self.num_slots, -1).sum(-1)
         kl_recons = kl_recons.view(batch_size, self.num_slots, -1).sum(-1)
-        p_x = p_x.view(batch_size, self.num_slots, -1).sum(-1)
+        p_x = p_x.view(batch_size, self.num_slots, -1)
 
-        total_loss = -p_x.sum(-1) + kl_mask.sum(-1) + kl_recons.sum(-1)
+        total_loss = -p_x.sum([-2, -1]) + kl_mask.sum(-1) + kl_recons.sum(-1)
 
         # currently missing is the mask reconstruction loss
         return_dict = {'loss': total_loss,
@@ -281,8 +294,8 @@ class GENESIS(nn.Module):
     def build_flat_image_representation(self, x, return_dists=False):
         batch_size = x.shape[0]
 
-        mask_input = x.unsqueeze(0).repeat(self.num_slots, 1, 1, 1, 1)
-        mask_mean, mask_std = self.mask_encoder(mask_input)
+        img_enc, _ = self.mask_encoder(x)
+        mask_mean, mask_std = self.rec_encoder(img_enc.unsqueeze(0).repeat(1, self.num_slots, 1))
         mask_mean = mask_mean.view(batch_size * self.num_slots, -1)
         mask_std = mask_std.view(batch_size * self.num_slots, -1)
         z_mask, kl_mask = net_util.differentiable_sampling(mask_mean, mask_std, 1.)
@@ -292,7 +305,7 @@ class GENESIS(nn.Module):
         # generate masks via softmax (to forgo for loop for stick-breaking)
         masks = torch.softmax(mask_logits, 1)
         masks = masks.view(-1, 1, *self.image_shape)
-        reconstruction_input = mask_input.view(-1, 3, *self.image_shape)
+        reconstruction_input = x.repeat_interleave(self.num_slots, 0)
         
         # generate reconstructions
         reconstruction_input = torch.cat([reconstruction_input, masks], 1)

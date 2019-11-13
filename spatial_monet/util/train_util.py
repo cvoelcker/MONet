@@ -153,8 +153,8 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                 running_loss = 0.0
                 recon_loss = 0.0
                 kl_loss = 0.0
-                torch.save(output, 'current_res')
-                torch.save(images, 'current_img')
+                torch.save(output, visdom_env + '_current_res')
+                torch.save(images, visdom_env + '_current_img')
         torch.save(monet.state_dict(), checkpoint_file)
 
         if beta_overwrite is None:

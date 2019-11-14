@@ -283,11 +283,11 @@ class SpatialAutoEncoder(nn.Module):
 
         # generate latent embedding of the patch
         mean_img, sigma_img = self.encoding_network(encoder_input)
-        sigma_img = 2 * torch.sigmoid(sigma_img) + 1e-10
+        sigma_img = F.softplus(sigma_img) + 1e-10
         z_img, kl_z_img = net_util.differentiable_sampling(mean_img, sigma_img, self.prior)
         
         mean_mask, sigma_mask = self.mask_encoding_network(encoder_input)
-        sigma_mask = 2 * torch.sigmoid(sigma_mask) + 1e-10
+        sigma_mask = F.softplus(sigma_mask) + 1e-10
         z_mask, kl_z_mask = net_util.differentiable_sampling(mean_mask, sigma_mask, self.prior)
 
         return mask, z_img, mean_img, sigma_img, kl_z_img, z_mask, mean_mask, sigma_mask, kl_z_mask
@@ -585,7 +585,7 @@ class MaskedAIR(nn.Module):
                 [grid, pos.view(-1, self.num_slots, 6), latents], -1)
             return full, loss
 
-    def reconstruct_from_latent(self, x, imgs=None):
+    def reconstruct_from_latent(self, x, imgs=None, reconstruct_mask=True):
         """
         Given a latent representation of the image, construct a full image again
 
@@ -593,6 +593,8 @@ class MaskedAIR(nn.Module):
             - x: torch.Tensor shapes (batch, num_slots, latent_dims + 6[theta]
             + 2[pos])
         """
+        if not reconstruct_mask and imgs is None:
+            raise ValueError('Cannot compute masks without image')
         images = torch.zeros(x.shape[0], 3, self.image_shape[0], self.image_shape[1])
         if imgs is not None:
             images = torch.zeros_like(imgs)
@@ -612,6 +614,20 @@ class MaskedAIR(nn.Module):
                     latents[:, i, :self.component_latent_dim//2], 
                     latents[:, i, self.component_latent_dim//2:], 
                     thetas[:, i, :])
+            if not reconstruct_mask:
+                mask_pred = mask
+                inp = torch.cat([imgs, ((imgs - background) - images).detach(), scope], 1)
+                grid = F.affine_grid(thetas[:, i], torch.Size((imgs.size()[0], 1, *self.patch_shape)))
+                x_patch = net_util.transform(inp, grid, thetas[:, i])
+                mask = self.spatial_vae.mask_network(x_patch)
+                mask_for_kl = net_util.invert(mask * 0.9998 + 0.0001, thetas[:, i],
+                                              self.image_shape)
+                mask = net_util.invert(mask, thetas[:, i], self.image_shape)
+
+                # calculate mask prediction error
+                kl_mask = net_util.kl_mask(
+                    mask_pred,
+                    mask_for_kl)
             images += recon * mask * scope
             if imgs is not None:
                 p_x += net_util.reconstruction_likelihood(
@@ -631,6 +647,8 @@ class MaskedAIR(nn.Module):
                 background,
                 (1 - torch.sum(torch.cat(masks, 1), 1, True)),
                 self.bg_sigma, self.running)
+            if not reconstruct_mask:
+                return images, p_x, kl_mask
             return images, p_x
 
         return images

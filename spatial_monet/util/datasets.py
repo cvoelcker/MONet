@@ -110,6 +110,7 @@ class Clevr(Dataset):
 
 class Atari(Dataset):
     def __init__(self, directory, transform=None):
+        print('Loading data from ' + directory)
         self.directory = directory
         self.filenames = os.listdir(directory)
         self.transform = transform
@@ -148,3 +149,27 @@ class Atari(Dataset):
             if self.transform is not None:
                 img = self.transform(img)
             yield img
+
+
+class BlackWhite(Dataset):
+    def __init__(self, length, transform=None):
+        self.length = length
+        self.transform = transform
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        img = np.random.choice([0, 1])
+        img = [np.zeros((64, 64, 3)), np.ones((64, 64, 3))][img]
+        img = np.array(img, dtype='uint8') * 255
+        img = Image.fromarray(img)
+        if self.transform is not None:
+            img = self.transform(img)
+        return img
+
+    def get_shape(self):
+        return (3, 64, 64)
+
+    def get_all_imgs(self):
+        return []

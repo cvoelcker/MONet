@@ -15,10 +15,13 @@ parser.add_argument('--batch_size', type=int, default=4)
 parser.add_argument('--epochs', type=int, default=200)
 parser.add_argument('--num_slots', type=int, default=8)
 parser.add_argument('--step_size', type=float, default=1e-4)
+parser.add_argument('--sigma', type=float, default=0.01)
 parser.add_argument('--visdom_env', default='clippingandregularized')
 parser.add_argument('--beta', type=float, default=1.0)
 parser.add_argument('--gamma', type=float, default=1.0)
 parser.add_argument('--latent-dim', type=int, default=16)
+parser.add_argument('--softmax_masks', action='store_true')
+parser.add_argument('--DEBUG', action='store_true')
 
 
 MaskedAIRModelConfiguration = recordtype(
@@ -37,6 +40,8 @@ MaskedAIRModelConfiguration = recordtype(
         ('beta', 1.0),
         ('gamma', 1.0),
         ('constrain_theta', True),
+        ('softmax_masks', False),
+        ('debug', False),
     ])
 
 RunConfiguration = recordtype(
@@ -53,7 +58,7 @@ RunConfiguration = recordtype(
         ('parallel', True),
         ('checkpoint_file', '../monet_checkpoints/air_model_gravitar.ckpt'),
         ('data_dir',
-         '../master_thesis_code/src/data/demon_attack/static_gym_no_white'),
+         '../master_thesis_code/src/data/demon_attack/static_gym_tiny'),
     ])
 
 ExperimentConfiguration = recordtype(
@@ -97,6 +102,9 @@ def parse_args_to_config(args):
     model_conf.beta = args.beta
     model_conf.gamma = args.gamma
     model_conf.latent_dim = args.latent_dim
+    model_conf.softmax_masks = args.softmax_masks
+    model_conf.debug = args.DEBUG
+    model_conf.bg_sigma = args.sigma
 
     full_conf = ExperimentConfiguration(run_conf, model_conf)
     return full_conf

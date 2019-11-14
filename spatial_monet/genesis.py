@@ -9,6 +9,59 @@ import torch.nn.functional as F
 import torch.distributions as dists
 
 import spatial_monet.util.network_util as net_util
+import spatial_monet.util.sylvester_layers as sylvester
+
+
+class SylvesterConvEncoder(nn.Module):
+    def __init__(self, img_shape=(32, 32), latent_dim=32, input_size=4, **kwargs):
+        super().__init__()
+
+        self.latent_dim = latent_dim
+        self.patch_shape = img_shape
+        self.conv_layers = nn.Sequential(
+            sylvester.GatedConv2d(input_size,  32,  5, 1, 2),
+            sylvester.GatedConv2d(32, 32,  5, 2, 2),
+            sylvester.GatedConv2d(32, 64,  5, 1, 2),
+            sylvester.GatedConv2d(64, 64,  5, 2, 2),
+            sylvester.GatedConv2d(64, 64,  5, 1, 2),
+            sylvester.GatedConv2d(64, 256, 16, 1, 0))
+        self.mlp = nn.Sequential(
+                nn.ELU(),
+                nn.Linear(256, latent_dim * 2))
+
+    def forward(self, x):
+        conv = self.conv_layers(x)
+        conv = conv.view(x.shape[0], -1)
+        return self.mlp(conv)
+
+
+class SylvesterConvDecoder(nn.Module):
+    def __init__(self, img_shape=(32, 32), latent_dim=32, output_size=1, **kwargs):
+        super().__init__()
+
+        self.latent_dim = latent_dim
+        self.img_shape = img_shape
+
+        network = [
+            sylvester.GatedConvTranspose2d(latent_dim, 64, 16, 1, 0),
+            sylvester.GatedConvTranspose2d(64, 64, 5, 1, 2),
+            sylvester.GatedConvTranspose2d(64, 32, 5, 2, 2, output_padding = 1),
+            sylvester.GatedConvTranspose2d(32, 32, 5, 1, 2),
+            sylvester.GatedConvTranspose2d(32, 32, 5, 2, 2, output_padding = 1),
+            sylvester.GatedConvTranspose2d(32, 32, 5, 1, 2),
+            nn.Conv2d(32, output_size, 1)
+        ]
+        if output_size > 1:
+            # constrain pixels to [0, 1] interval
+            network.append(nn.Sigmoid())
+
+        self.network = nn.Sequential(*network)
+
+    def forward(self, x):
+        # adds coordinate information to z and 
+        # produces a tiled representation of z
+        result = self.network(x.view(-1, self.latent_dim, 1, 1))
+        return result
 
 
 class ConvEncoderNet(nn.Module):
@@ -24,21 +77,17 @@ class ConvEncoderNet(nn.Module):
 
         self.network = nn.Sequential(
             nn.Conv2d(input_size, 16, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
+            nn.ELU(),
             nn.MaxPool2d(2, stride=2),
-
             nn.Conv2d(16, 32, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
+            nn.ELU(),
             nn.MaxPool2d(2, stride=2),
-
             nn.Conv2d(32, 64, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            
+            nn.ELU(),
             nn.Conv2d(64, 64, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            
+            nn.ELU(),
             nn.Conv2d(64, 64, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
+            nn.ELU(),
             nn.MaxPool2d(2, stride=2),
         )
         self.conv_size = int(
@@ -46,7 +95,7 @@ class ConvEncoderNet(nn.Module):
                     2 ** 3))
         self.mlp = nn.Sequential(
             nn.Linear(self.conv_size, 2 * self.latent_dim),
-            nn.ReLU(inplace=False))
+            nn.ELU())
         self.mean_mlp = nn.Sequential(
             nn.Linear(self.latent_dim, self.latent_dim))
         self.sigma_mlp = nn.Sequential(
@@ -57,7 +106,7 @@ class ConvEncoderNet(nn.Module):
         x = x.view(-1, self.conv_size)
         x = self.mlp(x)
         mean = self.mean_mlp(x[:, :self.latent_dim])
-        sigma = self.sigma_mlp(x[:, self.latent_dim:])
+        sigma = F.softplus(self.sigma_mlp(x[:, self.latent_dim:])) + 1e-10
         return mean, sigma
 
 
@@ -73,23 +122,28 @@ class RecEncoderNet(nn.Module):
         self.img_shape = img_shape
         self.num_slots = num_slots
 
-        self.rec = nn.GRU(self.latent_dim, self.latent_dim, batch_first=True)
-    
+        self.rec = nn.GRU(2 * self.latent_dim, 2 * self.latent_dim, batch_first=True)
+        self.joint_mlp = nn.Sequential(
+            nn.ELU(),
+            nn.Linear(2 * self.latent_dim, 2 * self.latent_dim),
+            nn.ELU(),
+            nn.Linear(2 * self.latent_dim, 2 * self.latent_dim))
         self.mean_mlp = nn.Sequential(
-            nn.ReLU(),
-            nn.Linear(self.latent_dim, self.latent_dim))
+            nn.ELU(),
+            nn.Linear(2 * self.latent_dim, self.latent_dim))
         self.sigma_mlp = nn.Sequential(
-            nn.ReLU(),
-            nn.Linear(self.latent_dim, self.latent_dim))
+            nn.ELU(),
+            nn.Linear(2 * self.latent_dim, self.latent_dim))
 
     def forward(self, x):
         latent_dim = self.latent_dim
         num_slots = self.num_slots
         # reshaping is necessary for different scalings of conv and rec part
         x_rec, _ = self.rec(x)
-        x_rec = x_rec.contiguous().view(-1, latent_dim)
+        x_rec = x_rec.contiguous().view(-1, 2 * latent_dim)
+        x_rec = self.joint_mlp(x_rec)
         mean = self.mean_mlp(x_rec)
-        sigma = 2 * torch.sigmoid(self.sigma_mlp(x_rec)) + 1e-10
+        sigma = F.softplus(self.sigma_mlp(x_rec)) + 1e-10
         mean = mean.view(-1, num_slots, latent_dim)
         sigma = sigma.view(-1, num_slots, latent_dim)
         return mean, sigma
@@ -108,26 +162,19 @@ class DecoderNet(nn.Module):
         self.img_shape = img_shape
 
         network = [
-            nn.Conv2d(self.latent_dim + 2, 64, 5, padding=(2, 2)),
-            nn.ReLU(inplace=False),
-            nn.Conv2d(64, 32, 5, padding=(2, 2)),
-            nn.ReLU(inplace=False),
-            # nn.Conv2d(64, 64, 5, padding=(2,2)),
-            # nn.ReLU(inplace=False),
+            nn.Conv2d(self.latent_dim + 2, 64, 3, padding=(1, 1)),
+            nn.ELU(),
+            nn.Conv2d(64, 32, 3, padding=(1, 1)),
+            nn.ELU(),
             nn.Conv2d(32, 32, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
+            nn.ELU(),
             nn.Conv2d(32, 32, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            nn.Conv2d(32, 32, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            nn.Conv2d(32, 32, 3, padding=(1, 1)),
-            nn.ReLU(inplace=False),
-            nn.Conv2d(32, 16, 3, padding=(1,1)),
-            nn.ReLU(inplace=False),
-            nn.Conv2d(16, output_size, 1),
+            nn.ELU(),
+            nn.Conv2d(32, output_size, 1),
         ]
         if output_size > 1:
-            network.append(nn.ReLU(inplace=False))
+            # constrain pixels to [0, 1] interval
+            network.append(nn.Sigmoid())
 
         self.network = nn.Sequential(*network)
 
@@ -156,36 +203,52 @@ class GENESIS(nn.Module):
             self, bg_sigma=0.01, fg_sigma=0.05, latent_prior=1.,
             latent_dim=16, patch_shape=(16, 16),
             image_shape=(256, 256), num_blocks=2, num_slots=8,
-            constrain_theta=False, beta=1., gamma=1., **kwargs):
+            constrain_theta=False, beta=1., gamma=1., 
+            softmax_masks=False, use_sylvester=True, 
+            debug=False, **kwargs):
         super().__init__()
-        self.bg_sigma = fg_sigma
-        self.fg_sigma = fg_sigma
+        self.sigma = bg_sigma
         self.latent_prior = latent_prior
         self.latent_dim = latent_dim
         self.latent_dim = latent_dim
         self.image_shape = image_shape
         self.num_slots = num_slots
+        self.softmax_masks = softmax_masks
+        self.debug = debug
+        self.counter = 0
 
         # TODO: currently unused, replace with GECO
         self.beta = beta
         self.gamma = gamma
         
         # networks
-
-        self.mask_encoder = ConvEncoderNet(
-                img_shape=self.image_shape, 
-                latent_dim=self.latent_dim,
-                num_slots=num_slots,
-                input_size=3)
+        # to encode the masks
+        if use_sylvester:
+            self.mask_encoder = SylvesterConvEncoder(
+                    img_shape=self.image_shape, 
+                    latent_dim=self.latent_dim,
+                    num_slots=num_slots,
+                    input_size=3)
+            self.mask_decoder = SylvesterConvDecoder(
+                    img_shape=self.image_shape,
+                    latent_dim=self.latent_dim,
+                    output_size=1)
+        else:
+            self.mask_encoder = ConvEncoderNet(
+                    img_shape=self.image_shape, 
+                    latent_dim=self.latent_dim,
+                    num_slots=num_slots,
+                    input_size=3)
+            self.mask_decoder = DecoderNet(
+                    img_shape=self.image_shape,
+                    latent_dim=self.latent_dim,
+                    output_size=1)
         self.rec_encoder = RecEncoderNet(
                 img_shape=self.image_shape, 
                 latent_dim=self.latent_dim,
                 num_slots=num_slots)
-        self.mask_decoder = DecoderNet(
-                img_shape=self.image_shape,
-                latent_dim=self.latent_dim,
-                output_size=1)
 
+        # to encode the images
         self.img_encoder = ConvEncoderNet(
                 img_shape=self.image_shape, 
                 latent_dim=self.latent_dim,
@@ -194,12 +257,13 @@ class GENESIS(nn.Module):
                 img_shape=self.image_shape,
                 latent_dim=self.latent_dim,
                 output_size=3)
-
+        
+        # to encode the prior means
         self.rec_prior = nn.GRU(self.latent_dim, self.latent_dim, batch_first=True)
         self.mlp_prior = nn.Sequential(
-                nn.Linear(self.latent_dim, self.latent_dim),
-                nn.ReLU(),
-                nn.Linear(self.latent_dim, self.latent_dim))
+                nn.Linear(self.latent_dim, 2 * self.latent_dim),
+                nn.ELU(),
+                nn.Linear(2 * self.latent_dim, self.latent_dim))
         
         # graph_depth = grid_x, grid_y, z_mask_mean/std, z_img_mean/std
         self.graph_depth = 2 + 4 * latent_dim
@@ -210,35 +274,44 @@ class GENESIS(nn.Module):
         Main model forward pass
         """
         batch_size = x.shape[0]
+        if self.debug and self.counter > 500:
+            from IPython.core.debugger import Tracer; Tracer()() 
+        self.counter += 1
 
         # generate recurrent mask z_s and logits
-        img_enc, _ = self.mask_encoder(x)
+        img_enc = self.mask_encoder(x)
         mask_mean, mask_std = self.rec_encoder(img_enc.unsqueeze(1).repeat(1, self.num_slots, 1))
         mask_mean = mask_mean.view(batch_size * self.num_slots, -1)
         mask_std = mask_std.view(batch_size * self.num_slots, -1)
-        z_mask, kl_mask = net_util.differentiable_sampling(mask_mean, mask_std, 1.)
+        z_mask = dists.Normal(mask_mean, mask_std).rsample()
         mask_logits = self.mask_decoder(z_mask)
         mask_logits = mask_logits.view(batch_size, self.num_slots, 1, *self.image_shape)
-        
-        # generate masks via softmax (to forgo for loop for stick-breaking)
-        masks = torch.softmax(mask_logits, 1)
+
+        # generate masks via softmax or via looped stick breaking
+        if self.softmax_masks:
+            masks = torch.softmax(mask_logits, 1)
+        else:
+            masks = torch.sigmoid(mask_logits)
+            scope = torch.ones_like(masks[:, 0])
+            final_masks = []
+            for i in range(self.num_slots-1):
+                final_masks.append(scope * masks[:, i])
+                scope = scope * (1 - masks[:, i])
+            final_masks.append(scope)
+            masks = torch.stack(final_masks, 1)
         masks = masks.view(-1, 1, *self.image_shape)
         reconstruction_input = x.repeat_interleave(self.num_slots, 0)
-        
+
         # generate reconstructions
         reconstruction_input = torch.cat([reconstruction_input, masks], 1)
         recon_mean, recon_std = self.img_encoder(reconstruction_input)
-        z_recons, kl_recons = net_util.differentiable_sampling(recon_mean, recon_std, 1.)
+        z_recons = dists.Normal(recon_mean, recon_std).rsample()
 
         recons = self.img_decoder(z_recons)
 
         # calculate reconstruction likelihood
-        p_x = net_util.reconstruction_likelihood(
-                reconstruction_input[:, :3],
-                recons,
-                masks,
-                self.bg_sigma,
-                0)
+        p_x = net_util.reconstruction_likelihood(reconstruction_input[:, :3], recons, masks, self.sigma)
+        p_x = p_x.reshape(batch_size, self.num_slots, 3, *self.image_shape)
 
         # reshape all components for images
         z_mask = z_mask.view(batch_size, self.num_slots, -1)
@@ -251,8 +324,7 @@ class GENESIS(nn.Module):
         masks = masks.view(batch_size, self.num_slots, 1, *self.image_shape)
         recons = recons.view(batch_size, self.num_slots, 3, *self.image_shape)
 
-        # calculate priors
-        
+        # calculate priors and KL term
         _prior_u = torch.zeros_like(z_mask[:, :1, :])
         _prior_input = torch.cat([_prior_u, z_mask[:, :-1]], 1)
         prior_mask_mean, _ = self.rec_prior(_prior_input)
@@ -271,10 +343,9 @@ class GENESIS(nn.Module):
 
         # reshape all loss terms
         kl_mask = kl_mask.view(batch_size, self.num_slots, -1).sum(-1)
-        kl_recons = kl_recons.view(batch_size, self.num_slots, -1).sum(-1)
-        p_x = p_x.view(batch_size, self.num_slots, -1)
+        kl_recon = kl_recon.view(batch_size, self.num_slots, -1).sum(-1)
 
-        total_loss = -p_x.sum([-2, -1]) + kl_mask.sum(-1) + kl_recons.sum(-1)
+        total_loss = -p_x.sum([-4,-3,-2,-1]) + kl_mask.sum(-1) + kl_recon.sum(-1)
 
         # currently missing is the mask reconstruction loss
         return_dict = {'loss': total_loss,
@@ -288,22 +359,34 @@ class GENESIS(nn.Module):
                        'theta': z_mask,
                        'thetas_mean': mask_mean,
                        'thetas_std': mask_std,
-                       'kl_loss': kl_mask + kl_recons}
+                       'kl_loss': kl_mask + kl_recon}
         return return_dict
-    
+
     def build_flat_image_representation(self, x, return_dists=False):
         batch_size = x.shape[0]
 
-        img_enc, _ = self.mask_encoder(x)
+        img_enc = self.mask_encoder(x)
         mask_mean, mask_std = self.rec_encoder(img_enc.unsqueeze(0).repeat(1, self.num_slots, 1))
         mask_mean = mask_mean.view(batch_size * self.num_slots, -1)
         mask_std = mask_std.view(batch_size * self.num_slots, -1)
-        z_mask, kl_mask = net_util.differentiable_sampling(mask_mean, mask_std, 1.)
+        z_mask = dists.Normal(mask_mean, mask_std).rsample()
         mask_logits = self.mask_decoder(z_mask)
         mask_logits = mask_logits.view(batch_size, self.num_slots, 1, *self.image_shape)
-        
+
+        z_mask = z_mask.reshape(batch_size, self.num_slots, -1)
+
         # generate masks via softmax (to forgo for loop for stick-breaking)
-        masks = torch.softmax(mask_logits, 1)
+        if self.softmax_masks:
+            masks = torch.softmax(mask_logits, 1)
+        else:
+            masks = torch.sigmoid(mask_logits)
+            scope = torch.ones_like(masks[:, 0])
+            final_masks = []
+            for i in range(self.num_slots-1):
+                final_masks.append(scope * masks[:, i])
+                scope = scope * (1 - masks[:, i])
+            final_masks.append(scope)
+            masks = torch.stack(final_masks, 1)
         masks = masks.view(-1, 1, *self.image_shape)
         reconstruction_input = x.repeat_interleave(self.num_slots, 0)
         
@@ -318,6 +401,20 @@ class GENESIS(nn.Module):
 
         masks = masks.view(batch_size, self.num_slots, *self.image_shape)
 
+        # calculate priors and KL term
+        _prior_u = torch.zeros_like(z_mask[:, :1, :])
+        _prior_input = torch.cat([_prior_u, z_mask[:, :-1]], 1)
+        prior_mask_mean, _ = self.rec_prior(_prior_input)
+        prior_dist_mask = dists.Normal(prior_mask_mean, 1.)
+        poster_dist_mask = dists.Normal(mask_mean, mask_std)
+        kl_mask = dists.kl_divergence(poster_dist_mask, prior_dist_mask)
+
+        prior_img_mean = self.mlp_prior(z_mask.view(batch_size * self.num_slots, -1))
+        prior_img_mean = prior_img_mean.view(batch_size, self.num_slots, -1)
+        prior_dist_img = dists.Normal(prior_img_mean, 1.)
+        poster_dist_img = dists.Normal(recon_mean, recon_std)
+        kl_recon = dists.kl_divergence(poster_dist_img, prior_dist_img)
+
         # offset necessary for dark masks
         grid = (net_util.center_of_mass(masks + 1e-20) - (self.image_shape[0]/2)) / self.image_shape[0]
         assert not torch.any(torch.isnan(grid))
@@ -327,9 +424,9 @@ class GENESIS(nn.Module):
         output_std = torch.cat([mask_std, recon_std], 2)
         
         if return_dists:
-            return output_mean, output_std, kl_mask
+            return output_mean, output_std, kl_mask + kl_recon
         else:
-            return output_mean, kl_mask
+            return output_mean, kl_mask + kl_recon
 
     def reconstruct_from_latent(self, latent_mean, latent_std, imgs=None):
         """
@@ -347,7 +444,7 @@ class GENESIS(nn.Module):
         mask_std = latent_std[:, :, :self.latent_dim].view(-1, self.latent_dim)
         recon_std = latent_std[:, :, self.latent_dim:].view(-1, self.latent_dim)
 
-        z_mask, kl_mask = net_util.differentiable_sampling(mask_mean, mask_std, 1.)
+        z_mask = dists.Normal(mask_mean, mask_std).rsample()
         mask_logits = self.mask_decoder(z_mask)
         mask_logits = mask_logits.view(batch_size, self.num_slots, 1, *self.image_shape)
         
@@ -356,7 +453,7 @@ class GENESIS(nn.Module):
         masks = masks.view(-1, 1, *self.image_shape)
         
         # generate reconstructions
-        z_recons, kl_recons = net_util.differentiable_sampling(recon_mean, recon_std, 1.)
+        z_recons = dists.Normal(recon_mean, recon_std).rsample()
 
         recons = self.img_decoder(z_recons)
 
@@ -370,10 +467,24 @@ class GENESIS(nn.Module):
 
         # reconstruct image
         img = torch.sum(masks * recons, 1)
+        
+        # calculate priors and KL term
+        _prior_u = torch.zeros_like(z_mask[:, :1, :])
+        _prior_input = torch.cat([_prior_u, z_mask[:, :-1]], 1)
+        prior_mask_mean, _ = self.rec_prior(_prior_input)
+        prior_dist_mask = dists.Normal(prior_mask_mean, 1.)
+        poster_dist_mask = dists.Normal(mask_mean, mask_std)
+        kl_mask = dists.kl_divergence(poster_dist_mask, prior_dist_mask)
+
+        prior_img_mean = self.mlp_prior(z_mask.view(batch_size * self.num_slots, -1))
+        prior_img_mean = prior_img_mean.view(batch_size, self.num_slots, -1)
+        prior_dist_img = dists.Normal(prior_img_mean, 1.)
+        poster_dist_img = dists.Normal(recon_mean, recon_std)
+        kl_recon = dists.kl_divergence(poster_dist_img, prior_dist_img)
 
         # reshape all loss terms
         kl_mask = kl_mask.view(batch_size, self.num_slots, -1).sum(-1)
-        kl_recons = kl_recons.view(batch_size, self.num_slots, -1).sum(-1)
+        kl_recon = kl_recon.view(batch_size, self.num_slots, -1).sum(-1)
 
         # calculate reconstruction likelihood
         if imgs is not None:
@@ -381,16 +492,15 @@ class GENESIS(nn.Module):
                 imgs.repeat(self.num_slots, 1, 1, 1),
                 recons,
                 masks,
-                self.bg_sigma,
-                0)
+                self.sigma)
             p_x = p_x.view(batch_size, self.num_slots, -1).sum(-1)
             masks = masks.view(batch_size, self.num_slots, 1, *self.image_shape)
             recons = recons.view(batch_size, self.num_slots, 3, *self.image_shape)
 
-            return p_x, kl_mask + kl_recons, img
+            return p_x, kl_mask + kl_recon, img
         
         masks = masks.view(batch_size, self.num_slots, 1, *self.image_shape)
         recons = recons.view(batch_size, self.num_slots, 3, *self.image_shape)
 
-        return kl_mask + kl_recons, img
+        return kl_mask + kl_recon, img
 

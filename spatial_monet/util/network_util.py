@@ -53,7 +53,7 @@ def differentiable_sampling(mean, sigma, prior_sigma):
     return z, kl_z
 
 
-def reconstruction_likelihood(x, recon, mask, sigma, i=None):
+def reconstruction_likelihood(x, recon, mask, sigma):
     dist = dists.Normal(x, sigma)
     p_x = dist.log_prob(recon) * mask
     return p_x

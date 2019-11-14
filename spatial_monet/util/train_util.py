@@ -137,8 +137,8 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                     torch.mean(g[1]).item() if torch.is_tensor(g[1]) else g[
                         1])) for g in gradients]
                 all_gradients.append(gradients)
-                print('[%d, %5d] loss: %.3f' %
-                      (epoch + 1, i + 1, running_loss / vis_every))
+                # print('[%d, %5d] loss: %.3f' %
+                #       (epoch + 1, i + 1, running_loss / vis_every))
                 # visualize_masks(numpify(images[:8]),
                 #                 numpify(output['masks'][:8]),
                 #                 numpify(output['reconstructions'][:8]),
@@ -153,9 +153,9 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                 running_loss = 0.0
                 recon_loss = 0.0
                 kl_loss = 0.0
-                torch.save(output, visdom_env + '_current_res')
-                torch.save(images, visdom_env + '_current_img')
-        torch.save(monet.state_dict(), checkpoint_file)
+                torch.save(output, 'visualizations/' + visdom_env + '_current_res')
+                torch.save(images, 'visualizations/' + visdom_env + '_current_img')
+        torch.save(monet.state_dict(), checkpoint_file + visdom_env)
 
         if beta_overwrite is None:
             monet.module.beta = sigmoid(0 - 10 + epoch)

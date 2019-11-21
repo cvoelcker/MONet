@@ -28,12 +28,13 @@ def masked_air_experiment():
                                         transforms.Lambda(lambda x: x.float()),
                                        ])
     trainset = datasets.Atari(run_conf.data_dir,
-                              transform=transform)
+                              transform=transform,
+                              source_type='pickle')
     trainloader = torch.utils.data.DataLoader(trainset,
                                               batch_size=run_conf.batch_size,
                                               shuffle=True, num_workers=8)
     parallel=False
-    model_conf_dict = experiment_config.record_type_to_dict(model_conf)
+    model_conf_dict = model_conf._asdict()
     print(model_conf_dict)
     monet = spatial_monet.MaskedAIR(**model_conf_dict)
     if run_conf.parallel:
@@ -46,7 +47,7 @@ def masked_air_experiment():
         monet = monet.cuda()
         sum([param.nelement() for param in monet.parameters()])
         monet = nn.DataParallel(monet, device_ids=[device_id])
-    run_dict = experiment_config.record_type_to_dict(run_conf)
+    run_dict = run_conf._asdict()
     run_training(monet, trainloader, **run_dict, beta_overwrite = 1.)
 
 

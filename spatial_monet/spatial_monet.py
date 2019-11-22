@@ -399,7 +399,8 @@ class MaskedAIR(nn.Module):
             self, bg_sigma=0.01, fg_sigma=0.05, latent_prior=1.,
             latent_dim=16, patch_shape=(16, 16),
             image_shape=(256, 256), num_blocks=2, num_slots=8,
-            constrain_theta=False, beta=1., gamma=1., **kwargs):
+            constrain_theta=False, beta=1., gamma=1., 
+            predict_masks=False, **kwargs):
         super().__init__()
         self.bg_sigma = bg_sigma
         self.fg_sigma = fg_sigma
@@ -410,6 +411,7 @@ class MaskedAIR(nn.Module):
         self.num_blocks = num_blocks
         self.num_slots = num_slots
         self.constrain_theta = constrain_theta
+        self.predict_masks = predict_masks
         self.spatial_vae = SpatialAutoEncoder(latent_prior,
                                               latent_dim,
                                               fg_sigma,
@@ -600,18 +602,21 @@ class MaskedAIR(nn.Module):
             - x: torch.Tensor shapes (batch, num_slots, latent_dims + 6[theta]
             + 2[pos])
         """
+        reconstruct_masks = reconstruct_mask or self.predict_masks
         if not reconstruct_mask and imgs is None:
             raise ValueError('Cannot compute masks without image')
-        images = torch.zeros(x.shape[0], 3, self.image_shape[0], self.image_shape[1])
+        images = torch.zeros(x.shape[0], 3, self.image_shape[0], self.image_shape[1]).cuda()
         if imgs is not None:
             images = torch.zeros_like(imgs)
             p_x = torch.zeros_like(images)
-        scope = torch.ones_like(p_x[:, 0:1, :, :])
+        scope = torch.ones_like(images[:, 0:1, :, :])
         if not reconstruct_mask:
             kl_mask = torch.zeros_like(scope)
 
         latents = x[:, :, 8:self.latent_dim + 8]
         thetas = x[:, :, 2:8]
+        # print(x.shape)
+        # print(thetas.shape)
         thetas = thetas.contiguous().view(-1, self.num_slots, 2, 3)
         masks = []
 
@@ -663,6 +668,6 @@ class MaskedAIR(nn.Module):
                 self.bg_sigma, self.running)
             if not reconstruct_mask:
                 return images, p_x, kl_mask
-            return images, p_x
+            return images, p_x, torch.zeros_like(scope)
 
         return images

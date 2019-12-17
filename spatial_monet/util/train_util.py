@@ -26,7 +26,7 @@ def save_results_after_training(model, data, save_location):
             mask_save.append(numpify(output['masks']))
             mask_preds_save.append(numpify(output['mask_preds']))
             recon_save.append(numpify(output['reconstructions']))
-            p_x_save.append(numpify(output['reconstruction_loss']))
+            p_x_save.append(numpify(output['p_x_loss']))
     image_save = np.concatenate(image_save, 0)
     mask_save = np.concatenate(mask_save, 0)
     recon_save = np.concatenate(recon_save, 0)
@@ -87,7 +87,7 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
         print('Initialized parameters')
 
     if tbhandler is None:
-        tbhandler = TensorboardHandler('../logs/', run_name)
+        tbhandler = TensorboardHandler('logs/', run_name)
     # optimizer = optim.RMSprop(monet.parameters(), lr=conf.step_size)
     optimizer = torch.optim.Adam(monet.parameters(), lr=step_size)
     all_gradients = []
@@ -120,8 +120,8 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
                 images = images.cuda()
             
             monet.zero_grad()
-            output = monet(images)
-            loss = torch.mean(output['loss'])
+            loss, output = monet(images)
+            loss = torch.mean(loss)
             loss.backward()
             gradients = [(n, p.grad) for n, p in monet.named_parameters()]
             gradients = [(g[0], (
@@ -142,11 +142,11 @@ def run_training(monet, trainloader, step_size=7e-4, num_epochs=1,
             
             running_loss += loss.detach().item()
             kl_loss += output['kl_loss'].mean().detach().item()
-            recon_loss += output['reconstruction_loss'].mean().detach().item()
+            recon_loss += output['p_x_loss'].mean().detach().item()
 
             epoch_loss.append(loss.detach().item())
             epoch_reconstruction_loss.append(
-                torch.mean(output['reconstruction_loss']).detach().item())
+                torch.mean(output['p_x_loss']).detach().item())
 
             assert not torch.isnan(torch.sum(loss))
             

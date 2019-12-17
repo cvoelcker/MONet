@@ -1,32 +1,31 @@
 model_config:
-    latent_dim: 64
-    background_latent_dim: 1
-    latent_prior: 1.0
-    patch_shape: 
-    - 16
-    - 16
-    image_shape: 
-    - 64
-    - 64
-    bg_sigma: 0.01
-    fg_sigma: 0.05
-    num_blocks: 2
-    channel_base: 8
-    num_slots: 8
-    beta: 1.0
-    gamma: 1.0
-    constrain_theta: True
+  latent_dim: 32
+  background_latent_dim: 1
+  latent_prior: 1.0
+  patch_shape: 
+  - 16
+  - 16
+  image_shape: 
+  - 128
+  - 128
+  bg_sigma: 0.01
+  fg_sigma: 0.05
+  num_blocks: 2
+  channel_base: 8
+  num_slots: 6
+  beta: 1.0
+  constrain_theta: False
 
 run_config:
-    batch_size: 64
-    num_epochs: 100
-    vis_every: 50
-    load_parameters: False
-    step_size: 0.0007
-    reshape: False
-    summarize: False
-    parallel: True
-    checkpoint_dir: experiments/
-    run_name: default
-    data_dir: physics_dir
-    tb_logging_dir: logs
+  batch_size: 64
+  num_epochs: 100
+  vis_every: 50
+  load_parameters: False
+  step_size: 0.0001
+  reshape: False
+  summarize: False
+  parallel: True
+  checkpoint_dir: experiments/
+  run_name: default
+  data_dir: test_data
+  tb_logging_dir: logs

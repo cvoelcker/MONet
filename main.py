@@ -29,7 +29,7 @@ def masked_air_experiment():
                                        ])
     trainset = datasets.Atari(run_conf.data_dir,
                               transform=transform,
-                              source_type='pickle')
+                              source_type='dill')
     trainloader = torch.utils.data.DataLoader(trainset,
                                               batch_size=run_conf.batch_size,
                                               shuffle=True, num_workers=8)

@@ -178,9 +178,8 @@ class SpatialLocalizationNet(nn.Module):
             theta_mean = (theta[:, :, 0] * self.constrain_mult) + self.constrain_add
         else:
             theta_mean = (theta[:, :, 0] * self.constrain_scale) + self.constrain_shift
-        theta_std = .1 * theta[:, :, 1] * self.constrain_std + 1e-4
-        return theta_mean, \
-               theta_std
+        theta_std = (.1 * theta[:, :, 1] * self.constrain_std) + 1e-4
+        return theta_mean, theta_std
 
 
 class MaskNet(nn.Module):
@@ -375,8 +374,8 @@ class FCBackgroundModel(nn.Module):
         with torch.no_grad():
             self.net.weight.zero_()
             norm = 0.
-            append = torch.zeros((1, self.image_shape[0], self.image_shape[1]))
             for image in images:
+                append = torch.zeros_like(image[0:1])
                 fill = torch.cat([image, append], 0).cuda()
                 self.net.weight.data += fill.view(-1, 1)
                 norm += 1.
@@ -471,7 +470,7 @@ class MaskedAIR(nn.Module):
 
         loss = torch.zeros_like(x[:, 0, 0, 0])
         kl_zs = torch.zeros_like(
-            x[:, 0, :self.latent_dim, 0]).squeeze()
+            x[:, 0, :self.latent_dim, 0]).squeeze(-1)
         kl_masks = torch.zeros_like(x[:, 0, :, :]).view(x.shape[0],
                                                         x.shape[2] * x.shape[
                                                             3])
@@ -552,6 +551,7 @@ class MaskedAIR(nn.Module):
         return_dict = {'loss': loss,
                        'reconstructions': total_reconstruction,
                        'p_x_loss': p_x_loss,
+                       'p_x_loss_mean': p_x_loss.mean(),
                        'masks': masks,
                        'mask_preds': mask_preds,
                        'latents': latents,
@@ -591,7 +591,7 @@ class MaskedAIR(nn.Module):
             return full_mean, full_std
         else:
             full = torch.cat(
-                [grid, pos.view(-1, self.num_slots, 6), latents_mean, latents_std], -1)
+                [grid, pos.view(-1, self.num_slots, 6), latents_mean], -1)
             return full, loss
 
     def reconstruct_from_latent(self, x, imgs=None, reconstruct_mask=True):
@@ -615,8 +615,6 @@ class MaskedAIR(nn.Module):
 
         latents = x[:, :, 8:self.latent_dim + 8]
         thetas = x[:, :, 2:8]
-        # print(x.shape)
-        # print(thetas.shape)
         thetas = thetas.contiguous().view(-1, self.num_slots, 2, 3)
         masks = []
 

@@ -24,10 +24,12 @@ class SylvesterConvEncoder(nn.Module):
             sylvester.GatedConv2d(32, 64,  5, 1, 2),
             sylvester.GatedConv2d(64, 64,  5, 2, 2),
             sylvester.GatedConv2d(64, 64,  5, 1, 2),
-            sylvester.GatedConv2d(64, 256, 16, 1, 0))
+            sylvester.GatedConv2d(64, 64,  5, 2, 2),
+            sylvester.GatedConv2d(64, 64,  5, 1, 2),
+            sylvester.GatedConv2d(64, 64, 16, 1, 0))
         self.mlp = nn.Sequential(
                 nn.ELU(),
-                nn.Linear(256, latent_dim * 2))
+                nn.Linear(64, latent_dim * 2))
 
     def forward(self, x):
         conv = self.conv_layers(x)

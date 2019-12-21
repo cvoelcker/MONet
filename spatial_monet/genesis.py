@@ -352,6 +352,8 @@ class GENESIS(nn.Module):
                        'total_reconstruction': img,
                        'reconstructions': recons,
                        'reconstruction_loss': p_x,
+                       'kl_m_loss': kl_mask,
+                       'kl_r_loss': kl_recon,
                        'masks': masks,
                        'latents': z_recons,
                        'latents_mean': recon_mean,
@@ -503,4 +505,3 @@ class GENESIS(nn.Module):
         recons = recons.view(batch_size, self.num_slots, 3, *self.image_shape)
 
         return kl_mask + kl_recon, img
-

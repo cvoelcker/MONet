@@ -24,12 +24,12 @@ class SylvesterConvEncoder(nn.Module):
             sylvester.GatedConv2d(32, 64,  5, 1, 2),
             sylvester.GatedConv2d(64, 64,  5, 2, 2),
             sylvester.GatedConv2d(64, 64,  5, 1, 2),
-            sylvester.GatedConv2d(64, 64,  5, 2, 2),
-            sylvester.GatedConv2d(64, 64,  5, 1, 2),
-            sylvester.GatedConv2d(64, 64, 16, 1, 0))
+            sylvester.GatedConv2d(64, 256,  5, 2, 2),
+            sylvester.GatedConv2d(256, 256,  5, 1, 2),
+            sylvester.GatedConv2d(256, 256, 16, 1, 0))
         self.mlp = nn.Sequential(
                 nn.ELU(),
-                nn.Linear(64, latent_dim * 2))
+                nn.Linear(256, latent_dim * 2))
 
     def forward(self, x):
         conv = self.conv_layers(x)
@@ -48,6 +48,8 @@ class SylvesterConvDecoder(nn.Module):
             sylvester.GatedConvTranspose2d(latent_dim, 64, 16, 1, 0),
             sylvester.GatedConvTranspose2d(64, 64, 5, 1, 2),
             sylvester.GatedConvTranspose2d(64, 32, 5, 2, 2, output_padding = 1),
+            sylvester.GatedConvTranspose2d(32, 32, 5, 1, 2),
+            sylvester.GatedConvTranspose2d(32, 32, 5, 2, 2, output_padding = 1),
             sylvester.GatedConvTranspose2d(32, 32, 5, 1, 2),
             sylvester.GatedConvTranspose2d(32, 32, 5, 2, 2, output_padding = 1),
             sylvester.GatedConvTranspose2d(32, 32, 5, 1, 2),
@@ -141,6 +143,7 @@ class RecEncoderNet(nn.Module):
         latent_dim = self.latent_dim
         num_slots = self.num_slots
         # reshaping is necessary for different scalings of conv and rec part
+        self.rec.flatten_parameters()
         x_rec, _ = self.rec(x)
         x_rec = x_rec.contiguous().view(-1, 2 * latent_dim)
         x_rec = self.joint_mlp(x_rec)
@@ -206,7 +209,7 @@ class GENESIS(nn.Module):
             latent_dim=16, patch_shape=(16, 16),
             image_shape=(256, 256), num_blocks=2, num_slots=8,
             constrain_theta=False, beta=1., gamma=1., 
-            softmax_masks=False, use_sylvester=True, 
+            softmax_masks=True, use_sylvester=True, 
             debug=False, **kwargs):
         super().__init__()
         self.sigma = bg_sigma
@@ -329,6 +332,7 @@ class GENESIS(nn.Module):
         # calculate priors and KL term
         _prior_u = torch.zeros_like(z_mask[:, :1, :])
         _prior_input = torch.cat([_prior_u, z_mask[:, :-1]], 1)
+        self.rec_prior.flatten_parameters()
         prior_mask_mean, _ = self.rec_prior(_prior_input)
         prior_dist_mask = dists.Normal(prior_mask_mean, 1.)
         poster_dist_mask = dists.Normal(mask_mean, mask_std)
@@ -353,7 +357,7 @@ class GENESIS(nn.Module):
         return_dict = {'loss': total_loss,
                        'total_reconstruction': img,
                        'reconstructions': recons,
-                       'reconstruction_loss': p_x,
+                       'p_x': p_x,
                        'kl_m_loss': kl_mask,
                        'kl_r_loss': kl_recon,
                        'masks': masks,
@@ -364,7 +368,7 @@ class GENESIS(nn.Module):
                        'thetas_mean': mask_mean,
                        'thetas_std': mask_std,
                        'kl_loss': kl_mask + kl_recon}
-        return return_dict
+        return total_loss, return_dict
 
     def build_flat_image_representation(self, x, return_dists=False):
         batch_size = x.shape[0]

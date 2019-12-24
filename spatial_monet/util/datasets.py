@@ -3,6 +3,7 @@ import sys
 import gzip
 import dill
 import tqdm
+import pickle
 
 import torch
 from torch.utils.data import Dataset
@@ -115,27 +116,36 @@ class Atari(Dataset):
         self.filenames = os.listdir(directory)
         self.transform = transform
 
-        self.dataset = self.load_dataset()
+        self.dataset = self.load_dataset(source_type=source_type)
         
         self.n = self.dataset.shape[0]
 
     def __len__(self):
         return self.n
 
-    def load_dataset(self):
+    def load_dataset(self, source_type='dill'):
         dataset = []
 
         for imgfile in tqdm.tqdm(self.filenames):
             imgpath = os.path.join(self.directory, imgfile)
-            with gzip.open(imgpath, 'rb') as f:
-                img = dill.load(f)
-                dataset.append(img)
+            if source_type == 'dill':
+                with gzip.open(imgpath, 'rb') as f:
+                    img = dill.load(f)
+                    dataset.append(img)
+            elif source_type == 'pickle':
+                with open(imgpath, 'rb') as f:
+                    img = pickle.load(f)
+                    img = img['X'].reshape(-1, 64, 64, 3)
+                    dataset.append(img)
         dataset = np.concatenate(dataset, axis=0)
         np.random.shuffle(dataset)
         return dataset
 
     def __getitem__(self, idx):
-        img = Image.fromarray(self.dataset[idx])
+        raw = self.dataset[idx]
+        raw = raw * 255.
+        raw = raw.astype('uint8')
+        img = Image.fromarray(raw)
         if self.transform is not None:
             img = self.transform(img)
         return img
@@ -145,6 +155,8 @@ class Atari(Dataset):
 
     def get_all_imgs(self):
         for raw in self.dataset:
+            raw = raw * 255.
+            raw = raw.astype('uint8')
             img = Image.fromarray(raw)
             if self.transform is not None:
                 img = self.transform(img)

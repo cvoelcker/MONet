@@ -8,13 +8,12 @@ import spatial_monet.util.network_util as net_util
 
 
 class AttentionNet(nn.Module):
-    def __init__(self, conf):
+    def __init__(self, num_blocks=2, channel_base=8):
         super().__init__()
-        self.conf = conf
-        self.unet = net_util.UNet(num_blocks=conf.num_blocks,
+        self.unet = net_util.UNet(num_blocks=num_blocks,
                          in_channels=4,
                          out_channels=2,
-                         channel_base=conf.channel_base)
+                         channel_base=channel_base)
 
     def forward(self, x, scope):
         inp = torch.cat((x, scope), 1)
@@ -28,7 +27,7 @@ class AttentionNet(nn.Module):
 
 
 class EncoderNet(nn.Module):
-    def __init__(self, width, height):
+    def __init__(self, width=128, height=128):
         super().__init__()
         self.convs = nn.Sequential(
             nn.Conv2d(4, 32, 3, stride=2),
@@ -57,7 +56,7 @@ class EncoderNet(nn.Module):
 
 
 class DecoderNet(nn.Module):
-    def __init__(self, height, width):
+    def __init__(self, width=128, height=128):
         super().__init__()
         self.height = height
         self.width = width
@@ -88,19 +87,24 @@ class DecoderNet(nn.Module):
 
 
 class Monet(nn.Module):
-    def __init__(self, conf, height, width):
+    def __init__(self, image_shape=[128, 128], num_slots=6, num_blocks=2, channel_base=8, **kwargs):
         super().__init__()
-        self.conf = conf
-        self.attention = AttentionNet(conf)
-        self.encoder = EncoderNet(height, width)
-        self.decoder = DecoderNet(height, width)
+        self.height = image_shape[0]
+        self.width = image_shape[1]
+        self.num_slots = num_slots
+        self.num_blocks = num_blocks
+        self.attention = AttentionNet(num_blocks=num_blocks, channel_base=channel_base)
+        self.encoder = EncoderNet(self.height, self.width)
+        self.decoder = DecoderNet(self.height, self.width)
         self.beta = 0.25
         self.gamma = 0.25
+        self.fg_sigma = 0.05
+        self.bg_sigma = 0.01
 
     def forward(self, x, pass_latent=False):
         scope = torch.ones_like(x[:, 0:1])
         masks = []
-        for i in range(self.conf.num_slots - 1):
+        for i in range(self.num_slots - 1):
             mask, scope = self.attention(x, scope)
             masks.append(mask)
         masks.append(scope)
@@ -114,7 +118,7 @@ class Monet(nn.Module):
             z, kl_z = self.__encoder_step(x, mask)
             if pass_latent:
                 zs.append(z)
-            sigma = self.conf.bg_sigma if i == 0 else self.conf.fg_sigma
+            sigma = self.bg_sigma if i == 0 else self.fg_sigma
             p_x, x_recon, mask_pred = self.__decoder_step(x, z, mask, sigma)
             mask_preds.append(mask_pred)
             loss += -p_x + self.beta * kl_z
@@ -128,11 +132,6 @@ class Monet(nn.Module):
         # hotfix for wrong transpose
         tr_masks = torch.transpose(tr_masks, 1, 2)
 
-        print(masks.size())
-        print(mask_preds.size())
-        print(tr_masks.size())
-        exit()
-
         q_masks = dists.Categorical(probs=tr_masks)
         q_masks_recon = dists.Categorical(logits=mask_preds)
         kl_masks = dists.kl_divergence(q_masks, q_masks_recon)
@@ -142,12 +141,13 @@ class Monet(nn.Module):
         #       'kl masks', kl_masks.mean().item())
         loss += self.gamma * kl_masks
         if pass_latent:
-            return {'loss': loss,
+            return loss, {'loss': loss,
                     'masks': masks,
                     'latent': zs}
-        return {'loss': loss,
-                'masks': masks,
-                'reconstructions': full_reconstruction}
+        return loss, {'loss': loss.mean().detach(),
+                'mask_loss': kl_masks.mean().detach(),
+                'p_x_loss': -p_xs.mean().detach(),
+                'kl_loss': kl_zs.mean().detach()}
 
     def build_image_graph(self, x):
         """

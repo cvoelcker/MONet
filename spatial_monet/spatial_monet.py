@@ -518,8 +518,7 @@ class MaskedAIR(nn.Module):
                                                  (1 - torch.sum(
                                                      torch.cat(masks, 1), 1,
                                                      True)),
-                                                 self.bg_sigma,
-                                                 self.running)
+                                                 self.bg_sigma)
         p_x_loss += p_x
 
         thetas = torch.cat(thetas, 1)
@@ -549,7 +548,7 @@ class MaskedAIR(nn.Module):
 
         # currently missing is the mask reconstruction loss
         return_dict = {'loss': loss,
-                       'reconstructions': total_reconstruction,
+                       'reconstruction': total_reconstruction.detach(),
                        'p_x_loss': p_x_loss,
                        'p_x_loss_mean': p_x_loss.mean(),
                        'masks': masks,

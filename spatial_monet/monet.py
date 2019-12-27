@@ -146,6 +146,7 @@ class Monet(nn.Module):
                     'latent': zs}
         return loss, {'loss': loss.mean().detach(),
                 'mask_loss': kl_masks.mean().detach(),
+                'reconstruction': full_reconstruction.detach(),
                 'p_x_loss': -p_xs.mean().detach(),
                 'kl_loss': kl_zs.mean().detach()}
 

@@ -663,7 +663,7 @@ class MaskedAIR(nn.Module):
                 background,
                 (1 - torch.sum(torch.cat(masks, 1), 1, True)),
                 self.bg_sigma)
-            masks.append(scope)
+            masks.insert(0, scope)
             masks = torch.cat(masks, 1)
             if not reconstruct_mask:
                 return images, p_x, kl_mask, masks

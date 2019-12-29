@@ -105,7 +105,7 @@ class SpatialLocalizationNet(nn.Module):
     """
 
     def __init__(self, image_shape=(256, 256), patch_shape=(32, 32),
-                 constrain_theta=False, num_slots=8, **kwargs):
+                 constrain_theta=False, num_slots=8, max_obj_size=0.5, **kwargs):
         super().__init__()
 
         self.image_shape = image_shape
@@ -114,7 +114,7 @@ class SpatialLocalizationNet(nn.Module):
         self.num_slots = num_slots
 
         self.min = 0.05
-        self.max = 0.2
+        self.max = max_obj_size
 
         self.detection_network = nn.Sequential(
             # block 1
@@ -395,7 +395,7 @@ class MaskedAIR(nn.Module):
             latent_dim=16, patch_shape=(16, 16),
             image_shape=(256, 256), num_blocks=2, num_slots=8,
             constrain_theta=False, beta=1., gamma=0.1, 
-            predict_masks=False, **kwargs):
+            predict_masks=False, max_obj_size=0.5, **kwargs):
         super().__init__()
         print(latent_dim)
         self.bg_sigma = bg_sigma
@@ -423,7 +423,8 @@ class MaskedAIR(nn.Module):
         self.spatial_localization_net = SpatialLocalizationNet(image_shape,
                                                                patch_shape,
                                                                constrain_theta,
-                                                               num_slots)
+                                                               num_slots,
+                                                               max_obj_size)
 
         self.beta = beta
         self.gamma = gamma
@@ -650,8 +651,7 @@ class MaskedAIR(nn.Module):
                     imgs, 
                     recon, 
                     mask * scope,
-                    self.fg_sigma, 
-                    self.running)
+                    self.fg_sigma)
             masks.append(mask * scope)
             scope = scope * (1 - mask)
 
@@ -662,9 +662,11 @@ class MaskedAIR(nn.Module):
                 imgs, 
                 background,
                 (1 - torch.sum(torch.cat(masks, 1), 1, True)),
-                self.bg_sigma, self.running)
+                self.bg_sigma)
+            masks.append(scope)
+            masks = torch.cat(masks, 1)
             if not reconstruct_mask:
-                return images, p_x, kl_mask
-            return images, p_x, torch.zeros_like(scope)
+                return images, p_x, kl_mask, masks
+            return images, p_x, torch.zeros_like(scope), masks
 
         return images

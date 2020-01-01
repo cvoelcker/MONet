@@ -140,15 +140,16 @@ class Monet(nn.Module):
         #       'kl_z', kl_zs.mean().item(),
         #       'kl masks', kl_masks.mean().item())
         loss += self.gamma * kl_masks
-        if pass_latent:
-            return loss, {'loss': loss,
-                    'masks': masks,
-                    'latent': zs}
-        return loss, {'loss': loss.mean().detach(),
-                'mask_loss': kl_masks.mean().detach(),
-                'reconstruction': full_reconstruction.detach(),
-                'p_x_loss': -p_xs.mean().detach(),
-                'kl_loss': kl_zs.mean().detach()}
+
+        return_dict = {'loss': loss,
+                       'reconstruction': full_reconstruction.detach(),
+                       'p_x_loss': p_xs.detach(),
+                       'p_x_loss_mean': p_xs.mean().detach(),
+                       'masks': masks.detach(),
+                       'mask_preds': mask_preds,
+                       'latents': zs}
+
+        return loss, return_dict
 
     def build_image_graph(self, x):
         """
